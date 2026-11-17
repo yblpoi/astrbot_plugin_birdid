@@ -172,13 +172,15 @@ AstrBot 以 Docker 部署、后端跑在宿主机时，容器里写 `127.0.0.1` 
 ## 开发
 
 ```bash
-pip install -r requirements.txt
-pip install pytest pytest-asyncio ruff
+pip install -r requirements-dev.txt   # 运行依赖 + pytest / pytest-asyncio / ruff
 
 ruff check .
 ruff format --check .
 python -m pytest tests -q
 ```
+
+`tests/test_main.py` 需要 AstrBot 本体才能导入，在纯开发环境里会自动跳过；
+在装了 AstrBot 的环境里跑，全套 183 个用例都会执行。
 
 代码结构：
 
