@@ -21,7 +21,7 @@ from .client import BirdClient, BirdResult
 from .format import Observation
 from .names import NameResolver
 from .regions import resolve_location
-from .render import crop_image, image_to_png_bytes, spectrogram_image
+from .render import crop_image, image_to_jpeg_bytes, spectrogram_image
 
 __all__ = ["BirdService", "PreparedReply", "ServiceBusy"]
 
@@ -48,7 +48,7 @@ class PreparedReply:
 
     Attributes:
         text: Reply text.
-        images: PNG payloads to attach, in display order.
+        images: JPEG payloads to attach, in display order.
         observations: Species shown in the text.
         elapsed_ms: Measured processing time.
         kind: "image" or "audio".
@@ -220,7 +220,7 @@ class BirdService:
             if crop is None:
                 continue
             try:
-                images.append(image_to_png_bytes(crop, optimize=True))
+                images.append(image_to_jpeg_bytes(crop))
             except Exception as exc:  # noqa: BLE001 - a crop is optional
                 self._logger.debug("crop encoding failed: %s", exc)
         self._store(
@@ -305,7 +305,7 @@ class BirdService:
             wav_path: Mono 32 kHz WAV produced for the upload.
 
         Returns:
-            PNG bytes, or None when the recording cannot be rendered.
+            JPEG bytes, or None when the recording cannot be rendered.
         """
         loaded = media_tools.read_pcm_samples(wav_path)
         if loaded is None:
@@ -323,7 +323,7 @@ class BirdService:
                 height=SPECTROGRAM_HEIGHT,
                 title=title,
             )
-            return image_to_png_bytes(image, optimize=True)
+            return image_to_jpeg_bytes(image)
         except Exception as exc:  # noqa: BLE001 - the plot is optional
             self._logger.debug("spectrogram rendering failed: %s", exc)
             return None

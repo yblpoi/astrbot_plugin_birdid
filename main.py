@@ -29,6 +29,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import Image, Plain
 from astrbot.api.star import Context, Star, StarTools
+from astrbot.core.star.filter.command import GreedyStr
 
 from .bird import media as media_tools
 from .bird.archive import ArchiveStore
@@ -152,13 +153,15 @@ class BirdIdPlugin(Star):
     async def birds(
         self,
         event: AstrMessageEvent,
-        location: str = "",
+        location: GreedyStr,
     ) -> None:
         """Identify the bird in an attached or quoted photo or recording.
 
         Args:
             event: Message event that triggered the command.
-            location: Optional province or country used as a range hint.
+            location: Optional province or country used as a range hint. The
+                whole tail of the command is taken, so "中国 云南" stays one
+                place name instead of being cut at the first space.
 
         Returns:
             None; the reply is sent from inside the handler.

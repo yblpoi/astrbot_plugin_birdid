@@ -29,7 +29,7 @@ from bird.media import MediaItem  # noqa: E402
 from bird.names import NameResolver  # noqa: E402
 from bird.service import BirdService, ServiceBusy  # noqa: E402
 
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+JPEG_SIGNATURE = b"\xff\xd8\xff"
 
 
 class FakeClient:
@@ -171,7 +171,7 @@ def detections() -> list:
 
 @pytest.fixture
 def image_item(tmp_path: Path) -> MediaItem:
-    """Write a PNG and wrap it as an image media item."""
+    """Write a photo and wrap it as an image media item."""
     path = tmp_path / "bird.png"
     Image.new("RGB", (240, 180), (40, 90, 40)).save(path)
     return MediaItem(kind="image", path=path)
@@ -249,16 +249,16 @@ async def test_identify_image_resolves_chinese_name(
     assert observation.gate_box == (20.0, 20.0, 120.0, 120.0)
 
 
-async def test_identify_image_returns_crop_png(
+async def test_identify_image_returns_crop_jpeg(
     image_item, workdir: Path, names, archive, detections
 ) -> None:
-    """Each rendered detection arrives as a PNG attachment."""
+    """Each rendered detection arrives as a JPEG attachment."""
     service = BirdService(FakeClient(detections), names, archive)
 
     reply = await service.identify([image_item], workdir)
 
     assert len(reply.images) == 1
-    assert reply.images[0].startswith(PNG_SIGNATURE)
+    assert reply.images[0].startswith(JPEG_SIGNATURE)
 
 
 async def test_identify_image_uploads_jpeg(
@@ -343,13 +343,13 @@ async def test_identify_audio_uploads_wav(
 async def test_identify_audio_renders_spectrogram(
     audio_item, workdir: Path, names, archive, detections, patch_transcode
 ) -> None:
-    """A decodable recording is drawn as a PNG spectrogram."""
+    """A decodable recording is drawn as a JPEG spectrogram."""
     service = BirdService(FakeClient(detections), names, archive)
 
     reply = await service.identify([audio_item], workdir)
 
     assert len(reply.images) == 1
-    assert reply.images[0].startswith(PNG_SIGNATURE)
+    assert reply.images[0].startswith(JPEG_SIGNATURE)
 
 
 async def test_identify_raises_service_busy_when_saturated(

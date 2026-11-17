@@ -9,10 +9,10 @@ Typical use::
     crop = crop_image(photo_path, detection_box, margin_ratio=0.15)
     if crop is None:
         ...  # degenerate detection, ask the user for another photo
-    png = image_to_png_bytes(crop)
+    jpeg = image_to_jpeg_bytes(crop)
 
     figure = spectrogram_image(samples, 32_000, title="Recording 1")
-    png = image_to_png_bytes(figure)
+    jpeg = image_to_jpeg_bytes(figure)
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from PIL import Image, ImageDraw, ImageFont
 __all__ = [
     "crop_image",
     "downsample_waveform",
+    "image_to_jpeg_bytes",
     "image_to_png_bytes",
     "spectrogram_image",
 ]
@@ -52,6 +53,13 @@ _MAX_FRAMES = 1600
 _MIN_REFERENCE_DBFS = -60.0
 _MAX_TICKS_PER_AXIS = 6
 _PNG_MODES = frozenset({"1", "L", "LA", "P", "RGB", "RGBA", "I", "I;16"})
+_JPEG_MODES = frozenset({"L", "RGB"})
+
+#: Reply images are sized for a chat bubble, not for archiving: quality 90 with
+#: 4:2:0 chroma keeps a 425x500 crop near 35 kB and a 966x474 spectrogram near
+#: 135 kB, both down from roughly 190 kB and 550 kB as PNG.
+DEFAULT_JPEG_QUALITY = 90
+DEFAULT_JPEG_SUBSAMPLING = 2
 
 # Log-spaced axis ticks: the 1-2-5 progression reads naturally on a log axis.
 _FREQUENCY_TICKS_HZ = (
@@ -191,6 +199,50 @@ def image_to_png_bytes(image: Image.Image, *, optimize: bool = False) -> bytes:
         image = image.convert("RGB")
     buffer = BytesIO()
     image.save(buffer, format="PNG", optimize=optimize)
+    return buffer.getvalue()
+
+
+def image_to_jpeg_bytes(
+    image: Image.Image,
+    *,
+    quality: int = DEFAULT_JPEG_QUALITY,
+    subsampling: int = DEFAULT_JPEG_SUBSAMPLING,
+    optimize: bool = True,
+) -> bytes:
+    """Encode a Pillow image as JPEG bytes.
+
+    Chat adapters inline image payloads as base64 inside the message, so the
+    encoded size is what the user actually waits for. A photograph crop and a
+    flat shaded spectrogram both compress several times smaller as JPEG than as
+    PNG at a quality where neither looks different on screen.
+
+    Args:
+        image: Any image; anything that is not RGB or greyscale is converted
+            first.
+        quality: JPEG quality from 1 to 95.
+        subsampling: Chroma subsampling factor, 0 for 4:4:4, 2 for 4:2:0.
+        optimize: Passed to PIL save; costs a little CPU for a smaller file.
+
+    Returns:
+        The complete JPEG file as bytes, ready to hand to a chat adapter.
+
+    Raises:
+        ValueError: If quality or subsampling is out of range.
+    """
+    if not 1 <= quality <= 95:
+        raise ValueError(f"quality must be between 1 and 95, got {quality!r}")
+    if subsampling not in (0, 1, 2):
+        raise ValueError(f"subsampling must be 0, 1 or 2, got {subsampling!r}")
+    if image.mode not in _JPEG_MODES:
+        image = image.convert("RGB")
+    buffer = BytesIO()
+    image.save(
+        buffer,
+        format="JPEG",
+        quality=quality,
+        subsampling=subsampling,
+        optimize=optimize,
+    )
     return buffer.getvalue()
 
 

@@ -23,6 +23,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from bird import render  # noqa: E402  (path bootstrap must run first)
 
+JPEG_SIGNATURE = b"\xff\xd8\xff"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
@@ -194,6 +195,48 @@ def test_image_to_png_bytes_converts_cmyk() -> None:
     payload = render.image_to_png_bytes(Image.new("CMYK", (8, 8), (0, 0, 0, 0)))
     with Image.open(__import__("io").BytesIO(payload)) as decoded:
         assert decoded.mode == "RGB"
+
+
+def test_image_to_jpeg_bytes_roundtrip() -> None:
+    """JPEG bytes decode back to an image of the same size."""
+    image = Image.new("RGB", (37, 19), (12, 34, 56))
+    payload = render.image_to_jpeg_bytes(image)
+    assert payload.startswith(JPEG_SIGNATURE)
+    with Image.open(io.BytesIO(payload)) as decoded:
+        assert decoded.size == (37, 19)
+
+
+def test_image_to_jpeg_bytes_converts_cmyk() -> None:
+    """Modes JPEG cannot store are converted instead of failing."""
+    payload = render.image_to_jpeg_bytes(Image.new("CMYK", (16, 16), (0, 0, 0, 0)))
+    with Image.open(io.BytesIO(payload)) as decoded:
+        assert decoded.mode == "RGB"
+
+
+def test_jpeg_quality_shrinks_the_payload() -> None:
+    """A lower quality yields a smaller file for the same picture."""
+    image = Image.new("RGB", (160, 160))
+    image.putdata(
+        [
+            ((x * 7) % 256, (y * 5) % 256, ((x + y) * 3) % 256)
+            for y in range(160)
+            for x in range(160)
+        ]
+    )
+    high = render.image_to_jpeg_bytes(image, quality=92)
+    low = render.image_to_jpeg_bytes(image, quality=60)
+    assert len(low) < len(high)
+
+
+def test_jpeg_rejects_out_of_range_options() -> None:
+    """Quality and subsampling outside their ranges are refused."""
+    image = Image.new("RGB", (8, 8))
+    for quality in (0, 96, -1):
+        with pytest.raises(ValueError, match="quality must be between 1 and 95"):
+            render.image_to_jpeg_bytes(image, quality=quality)
+    for subsampling in (3, -1):
+        with pytest.raises(ValueError, match="subsampling must be 0, 1 or 2"):
+            render.image_to_jpeg_bytes(image, subsampling=subsampling)
 
 
 def test_downsample_caps_point_count() -> None:
