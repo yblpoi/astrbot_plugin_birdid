@@ -243,7 +243,9 @@ async def test_identify_image_resolves_chinese_name(
 
     observation = reply.observations[0]
     assert (observation.zh, observation.en) == ("白鹭", "Little Egret")
-    assert observation.scientific == "Egretta garzetta"
+    # The image classifier puts a common name in the scientific slot, so a
+    # picture reply never repeats it as though it were a Latin name.
+    assert observation.scientific == ""
     assert observation.gate_box == (20.0, 20.0, 120.0, 120.0)
 
 
@@ -311,6 +313,17 @@ async def test_identify_audio_marks_reply_as_audio(
 
     assert reply.kind == "audio"
     assert len(reply.observations) == 1
+
+
+async def test_identify_audio_keeps_the_scientific_name(
+    audio_item, workdir: Path, names, archive, detections, patch_transcode
+) -> None:
+    """Recordings do report a scientific name, so the reply keeps it."""
+    service = BirdService(FakeClient(detections), names, archive)
+
+    reply = await service.identify([audio_item], workdir)
+
+    assert reply.observations[0].scientific == "Egretta garzetta"
 
 
 async def test_identify_audio_uploads_wav(

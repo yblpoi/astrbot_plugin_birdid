@@ -345,13 +345,17 @@ class BirdService:
                         species.scientific,
                         fallback_en=species.english,
                     )
+                    # The image classifier puts an English common name in the
+                    # scientific slot, so only recordings carry a real one.
+                    scientific = species.scientific if result.kind == "audio" else ""
                 else:
                     zh, en = species.common, species.english
+                    scientific = species.scientific
                 rows.append(
                     Observation(
                         zh=zh,
                         en=en,
-                        scientific=species.scientific,
+                        scientific=scientific,
                         confidence=species.confidence,
                         gate_box=detection.box,
                         gate_confidence=detection.gate_confidence,

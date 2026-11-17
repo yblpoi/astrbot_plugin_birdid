@@ -127,3 +127,48 @@ def test_bundled_table_holds_the_expected_species():
     resolver = NameResolver()
     zh, en = resolver.resolve("Passer montanus")
     assert zh == "麻雀" and "Sparrow" in en
+
+
+def test_alias_table_feeds_the_english_index(tmp_path):
+    """Class names the main table spells differently come from the alias file."""
+    table = tmp_path / "names.tsv.gz"
+    aliases = tmp_path / "aliases.tsv.gz"
+    _write_table(table, [("Alcedo coerulescens", "小蓝翠鸟", "Cerulean Kingfisher")])
+    _write_table(
+        aliases, [("small blue kingfisher", "小蓝翠鸟", "Cerulean Kingfisher")]
+    )
+    resolver = NameResolver(table, alias_path=aliases)
+    assert resolver.resolve("Small_Blue_Kingfisher") == (
+        "小蓝翠鸟",
+        "Cerulean Kingfisher",
+    )
+
+
+def test_alias_table_never_shadows_the_main_table(tmp_path):
+    table = tmp_path / "names.tsv.gz"
+    aliases = tmp_path / "aliases.tsv.gz"
+    _write_table(table, [("Parus major", "大山雀", "Great Tit")])
+    _write_table(aliases, [("great tit", "错名", "Wrong Tit")])
+    resolver = NameResolver(table, alias_path=aliases)
+    assert resolver.resolve("Great Tit") == ("大山雀", "Great Tit")
+
+
+def test_missing_alias_table_keeps_the_main_table(tmp_path):
+    table = tmp_path / "names.tsv.gz"
+    _write_table(table, [("Parus major", "大山雀", "Great Tit")])
+    resolver = NameResolver(table, alias_path=tmp_path / "absent.tsv.gz")
+    assert resolver.resolve("Great Tit") == ("大山雀", "Great Tit")
+
+
+def test_explicit_table_path_skips_the_bundled_aliases(tmp_path):
+    table = tmp_path / "names.tsv.gz"
+    _write_table(table, [("Parus major", "大山雀", "Great Tit")])
+    resolver = NameResolver(table)
+    assert resolver.resolve("Small Blue Kingfisher", fallback_en="x") == ("", "x")
+
+
+def test_bundled_aliases_resolve_alternative_class_names():
+    """The image classifier uses older English names for some of its classes."""
+    resolver = NameResolver()
+    assert resolver.resolve("Small Blue Kingfisher")[0] == "小蓝翠鸟"
+    assert resolver.resolve("Malaysian Blue-banded Kingfisher")[0] == "马来蓝带翠鸟"

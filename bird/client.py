@@ -196,12 +196,16 @@ def _decode_payload(payload: Any, kind: str, elapsed_ms: float) -> BirdResult:
             if not isinstance(entry, dict):
                 continue
             box = entry.get("box")
-            if not isinstance(box, (list, tuple)) or len(box) != 4:
+            if isinstance(box, (list, tuple)) and not box:
+                # Recordings carry no gate box; the candidates still count.
+                coords = ()
+            elif not isinstance(box, (list, tuple)) or len(box) != 4:
                 continue
-            try:
-                coords = tuple(float(value) for value in box)
-            except (TypeError, ValueError):
-                continue
+            else:
+                try:
+                    coords = tuple(float(value) for value in box)
+                except (TypeError, ValueError):
+                    continue
             species = [
                 parsed
                 for parsed in (_parse_species(item) for item in entry.get("list") or [])

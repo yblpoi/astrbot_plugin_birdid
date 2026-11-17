@@ -17,6 +17,11 @@ same row.
 The image classifier labels its candidates with an English common name instead
 of the scientific name, so the table is also indexed by its English column and
 a lookup that misses the scientific names falls back to that index.
+
+A second table, ``bird_aliases.tsv.gz``, maps the classifier class names that
+are missing from the first table onto the same three columns. Those classes
+use taxonomy revisions the main table spells differently, so they are
+resolved once at build time instead of being guessed at run time.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 __all__ = [
+    "DEFAULT_ALIAS_PATH",
     "DEFAULT_DATA_PATH",
     "NameResolver",
     "normalize_english",
@@ -38,6 +44,9 @@ _LOGGER = logging.getLogger(__name__)
 
 #: Table bundled with the plugin, relative to this module.
 DEFAULT_DATA_PATH = Path(__file__).resolve().parent / "data" / "bird_names.tsv.gz"
+
+#: Extra rows for classifier class names the main table does not carry.
+DEFAULT_ALIAS_PATH = Path(__file__).resolve().parent / "data" / "bird_aliases.tsv.gz"
 
 
 def normalize_english(value: str) -> str:
@@ -90,13 +99,25 @@ class NameResolver:
         path: Table file that backs this resolver.
     """
 
-    def __init__(self, path: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        path: Optional[Path] = None,
+        alias_path: Optional[Path] = None,
+    ) -> None:
         """Initialize the resolver without touching the filesystem.
 
         Args:
             path: Optional table path; defaults to the bundled table.
+            alias_path: Optional alias table; defaults to the bundled file
+                that sits beside the main table.
         """
         self.path = Path(path) if path is not None else DEFAULT_DATA_PATH
+        if alias_path is not None:
+            self.alias_path: Optional[Path] = Path(alias_path)
+        elif path is None:
+            self.alias_path = DEFAULT_ALIAS_PATH
+        else:
+            self.alias_path = None
         self._names: Dict[str, Tuple[str, str]] = {}
         self._by_english: Dict[str, Tuple[str, str]] = {}
         self._lock = threading.Lock()
@@ -143,6 +164,7 @@ class NameResolver:
                         alias = normalize_english(row[1])
                         if alias and alias not in by_english:
                             by_english[alias] = row
+                self._read_aliases(by_english)
             except FileNotFoundError:
                 _LOGGER.warning("bird name table not found: %s", self.path)
             except (OSError, EOFError, UnicodeDecodeError) as exc:
@@ -185,3 +207,36 @@ class NameResolver:
                 zh, en = row
                 return zh or fallback_zh, en or fallback_en
         return fallback_zh, fallback_en
+
+    def _read_aliases(self, by_english: Dict[str, Tuple[str, str]]) -> None:
+        """Merge the alias table into the English index.
+
+        The alias table only covers classifier class names that the main
+        table spells differently, so a missing or unreadable file is not an
+        error: the resolver simply keeps the rows it already has.
+
+        Args:
+            by_english: English index built from the main table, updated in
+                place.
+
+        Returns:
+            None
+        """
+        if self.alias_path is None:
+            return
+        try:
+            with gzip.open(self.alias_path, "rt", encoding="utf-8") as handle:
+                for line in handle:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) != 3:
+                        continue
+                    key = normalize_english(parts[0])
+                    if not key or key in by_english:
+                        continue
+                    by_english[key] = (parts[1].strip(), parts[2].strip())
+        except FileNotFoundError:
+            _LOGGER.warning("bird alias table not found: %s", self.alias_path)
+        except (OSError, EOFError, UnicodeDecodeError) as exc:
+            _LOGGER.warning(
+                "bird alias table unreadable (%s): %s", self.alias_path, exc
+            )
