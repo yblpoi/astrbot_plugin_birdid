@@ -1,0 +1,114 @@
+"""Tests for the chat reply rendering."""
+
+from __future__ import annotations
+
+from bird.format import Observation, format_reply, format_status
+
+
+def _observation(**overrides):
+    """Build an observation with sensible defaults."""
+    values = {
+        "zh": "麻雀",
+        "en": "Eurasian Tree Sparrow",
+        "scientific": "Passer montanus",
+        "confidence": 97.5,
+    }
+    values.update(overrides)
+    return Observation(**values)
+
+
+def test_label_shows_chinese_english_and_latin():
+    assert _observation().label() == "麻雀 / Eurasian Tree Sparrow / Passer montanus"
+
+
+def test_label_omits_a_repeated_english_name():
+    observation = _observation(
+        zh="普通翠鸟", en="Common Kingfisher", scientific="Common Kingfisher"
+    )
+    assert observation.label() == "普通翠鸟 / Common Kingfisher"
+
+
+def test_label_omits_a_latin_slot_that_only_repeats_the_common_name():
+    """The image classifier fills the scientific slot with a common name."""
+    observation = _observation(
+        zh="斑头大翠鸟", en="Blyth's Kingfisher", scientific="Blyths Kingfisher"
+    )
+    assert observation.label() == "斑头大翠鸟 / Blyth's Kingfisher"
+
+
+def test_label_falls_back_when_every_name_is_missing():
+    observation = _observation(zh="", en="", scientific="")
+    assert observation.label() == "未知"
+
+
+def test_reply_lists_the_gate_box_and_the_duration():
+    text = format_reply(
+        [_observation(gate_box=(10, 20, 110, 220), gate_confidence=88.5)],
+        kind="image",
+        elapsed_ms=205.6,
+    )
+    assert "识别结果" in text
+    assert "1. 麻雀 / Eurasian Tree Sparrow / Passer montanus  97.5%" in text
+    assert "检测框 10,20-110,220  门禁 88.5%" in text
+    assert text.rstrip().endswith("耗时 206 ms")
+
+
+def test_reply_without_gate_box_stays_on_one_line_per_species():
+    text = format_reply([_observation()], kind="audio", elapsed_ms=42.0)
+    assert "检测框" not in text
+    assert "耗时 42 ms" in text
+
+
+def test_reply_explains_an_empty_result():
+    text = format_reply([], kind="image", elapsed_ms=12.0)
+    assert "没有识别到鸟类。" in text
+    assert "耗时 12 ms" in text
+
+
+def test_reply_mentions_the_location_when_one_was_applied():
+    text = format_reply([_observation()], kind="image", elapsed_ms=1.0, location="云南")
+    assert "地点先验：云南" in text
+
+
+def test_reply_reports_truncated_candidates():
+    text = format_reply([_observation()], kind="image", elapsed_ms=1.0, truncated=2)
+    assert "另有 2 个候选未列出。" in text
+
+
+def test_reply_never_names_a_model_or_a_path():
+    text = format_reply(
+        [_observation(gate_box=(1, 2, 3, 4), gate_confidence=99.0)],
+        kind="image",
+        elapsed_ms=5.0,
+    )
+    for banned in ("yolo", "onnx", "fastvit", "birdnet", "npu", "/models", "ckpt"):
+        assert banned not in text.lower()
+
+
+def test_status_reports_the_backend_numbers():
+    text = format_status(
+        online=True,
+        health={"status": "ok", "version": "0.1.0", "pending": 2, "max_queue": 32},
+        queue=1,
+        running=2,
+        archive={"pending_mb": 1.5, "archive_mb": 20.0, "batches": 3},
+        names={"count": 11587, "loaded": True},
+    )
+    assert "状态：在线" in text
+    assert "版本：0.1.0" in text
+    assert "后端队列：2/32" in text
+    assert "本插件：排队 1，处理中 2" in text
+    assert "名称库：11587 条" in text
+
+
+def test_status_marks_an_offline_backend():
+    text = format_status(
+        online=False,
+        health={},
+        queue=0,
+        running=0,
+        archive={},
+        names={"count": 0, "loaded": False},
+    )
+    assert "状态：离线" in text
+    assert "（未加载）" in text

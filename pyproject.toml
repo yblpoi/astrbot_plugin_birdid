@@ -1,0 +1,15 @@
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+exclude = ["bird/data"]
+
+[tool.ruff.lint]
+# Bug oriented selection: pycodestyle, pyflakes, warnings, import order and
+# the two flake8-bugbear / comprehensions sets. Modernisation rules such as
+# UP006/UP031 are deliberately left out, they rewrite working code for style.
+select = ["E", "F", "W", "I", "B", "C4"]
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
