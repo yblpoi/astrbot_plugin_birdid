@@ -359,6 +359,42 @@ class BirdClient:
         limit = self.timeout_s if deadline_s is None else max(1.0, float(deadline_s))
         loop = asyncio.get_running_loop()
         started = loop.time()
+        try:
+            return await self._submit_loop(data, kind, limit, started)
+        except asyncio.TimeoutError:
+            # TimeoutError is an OSError subclass, so this branch has to come
+            # first or a deadline would be reported as a dead connection.
+            raise
+        except (aiohttp.ClientError, OSError):
+            # A refused connection or a dropped socket must reach the caller as
+            # a plain protocol failure, so the handler never sees a transport
+            # exception with the backend address inside it.
+            raise ClientError(0, "transport failed") from None
+
+    async def _submit_loop(
+        self,
+        data: aiohttp.FormData,
+        kind: str,
+        limit: float,
+        started: float,
+    ) -> BirdResult:
+        """Post one job and poll it until the payload is ready.
+
+        Args:
+            data: Form payload describing the job.
+            kind: Either "image" or "audio".
+            limit: Wall clock budget in seconds.
+            started: Loop time when the request began.
+
+        Returns:
+            The parsed identification result.
+
+        Raises:
+            BusyError: The service is saturated.
+            ClientError: Any other protocol level failure.
+            asyncio.TimeoutError: The job did not finish within the deadline.
+        """
+        loop = asyncio.get_running_loop()
         async with self._semaphore:
             session = await self._get_session()
             async with session.post(

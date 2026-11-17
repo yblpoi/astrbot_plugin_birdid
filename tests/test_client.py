@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+
+import aiohttp
 import pytest
 
 from bird.client import (
     CODE_NO_ANIMALS,
     CODE_OK,
     CODE_PROCESSING,
+    BirdClient,
     BusyError,
     ClientError,
     _decode_payload,
@@ -118,3 +122,34 @@ def test_processing_reply_is_reported_as_a_client_error():
     with pytest.raises(ClientError) as info:
         _error_or_result(CODE_PROCESSING, "rid", "image", 1.0)
     assert info.value.code == CODE_PROCESSING
+
+
+async def test_submit_reports_a_refused_connection_as_a_client_error():
+    """A dead backend must surface as ClientError, not a raw transport error."""
+    client = BirdClient("http://127.0.0.1:9", timeout_s=1.0)
+    form = aiohttp.FormData()
+    form.add_field("image", b"\xff\xd8\xff", filename="image.jpg")
+    try:
+        with pytest.raises(ClientError) as info:
+            await client._submit(form, "image", 1.0)
+    finally:
+        await client.close()
+    assert info.value.code == 0
+    assert "127.0.0.1" not in str(info.value)
+
+
+async def test_submit_keeps_a_deadline_as_a_timeout(monkeypatch):
+    """A deadline must not be reported as a dead connection."""
+    client = BirdClient("http://127.0.0.1:9", timeout_s=1.0)
+
+    async def _boom(*args, **kwargs):
+        raise asyncio.TimeoutError("identification did not finish in time")
+
+    monkeypatch.setattr(client, "_submit_loop", _boom)
+    form = aiohttp.FormData()
+    form.add_field("image", b"\xff\xd8\xff", filename="image.jpg")
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await client._submit(form, "image", 1.0)
+    finally:
+        await client.close()

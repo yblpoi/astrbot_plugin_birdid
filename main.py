@@ -198,9 +198,17 @@ class BirdIdPlugin(Star):
                 logger.warning("Backend rejected the request: %s", exc)
                 await self._reply(event, "识别服务暂时不可用，请稍后再试。")
                 return
+            except asyncio.TimeoutError:
+                logger.warning("Backend did not answer within the deadline.")
+                await self._reply(event, "这次识别超时了，请稍后再试。")
+                return
             except ValueError as exc:
                 logger.warning("Preparing media failed: %s", exc)
                 await self._reply(event, "这段附件无法读取，请换一张图片或一段录音。")
+                return
+            except Exception as exc:  # noqa: BLE001 - never leak a stack trace
+                logger.exception("Identification failed unexpectedly: %s", exc)
+                await self._reply(event, "识别过程出错了，请稍后再试。")
                 return
 
             elapsed_ms = max(reply.elapsed_ms, (time.monotonic() - started) * 1000.0)

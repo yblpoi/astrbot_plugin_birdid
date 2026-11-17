@@ -157,6 +157,7 @@ class BirdService:
         Raises:
             ServiceBusy: Every worker slot is already busy.
             ClientError: The backend rejected the request.
+            asyncio.TimeoutError: The backend missed its deadline.
             ValueError: The media could not be prepared or was not found.
         """
         started = time.monotonic()
