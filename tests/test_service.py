@@ -404,12 +404,19 @@ async def test_archive_receives_resolved_species(
 
     record = archive.records[0]
     assert record["source"] == "image"
-    assert record["species"] == {
-        "zh": "白鹭",
-        "en": "Little Egret",
-        "sci": "Egretta garzetta",
-    }
+    assert record["species"] == {"zh": "白鹭", "en": "Little Egret", "sci": ""}
     assert record["request"] == "req-1"
+
+
+async def test_archive_keeps_the_scientific_name_of_recordings(
+    audio_item, workdir: Path, names, archive, detections, patch_transcode
+) -> None:
+    """A recording archives the scientific name the backend reported."""
+    service = BirdService(FakeClient(detections), names, archive)
+
+    await service.identify([audio_item], workdir)
+
+    assert archive.records[0]["species"]["sci"] == "Egretta garzetta"
 
 
 async def test_observations_use_common_name_for_non_birds(

@@ -396,7 +396,10 @@ class BirdService:
                 zh, en = self.names.resolve(top.scientific, fallback_en=top.english)
             else:
                 zh, en = top.common, top.english
-            species = {"zh": zh, "en": en, "sci": top.scientific}
+            # Only recordings carry a real scientific name; the image
+            # classifier reports an English common name in that slot.
+            scientific = top.scientific if source == "audio" else ""
+            species = {"zh": zh, "en": en, "sci": scientific}
             confidence = top.confidence
             gate = list(detection.box)
         try:
