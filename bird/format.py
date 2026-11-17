@@ -141,6 +141,26 @@ def format_reply(
     return "\n".join(lines)
 
 
+def _format_size(megabytes: float) -> str:
+    """Render a size so small values stay readable.
+
+    Args:
+        megabytes: Size in mebibytes.
+
+    Returns:
+        The size with a KB or MB unit; zero renders as ``0 KB``.
+    """
+    try:
+        value = float(megabytes)
+    except (TypeError, ValueError):
+        value = 0.0
+    if value <= 0:
+        return "0 KB"
+    if value < 1.0:
+        return "%.1f KB" % (value * 1024.0)
+    return "%.1f MB" % value
+
+
 def format_status(
     *,
     online: bool,
@@ -180,10 +200,10 @@ def format_status(
             lines.append("后端负载：%s" % state)
     lines.append("本插件：排队 %d，处理中 %d" % (queue, running))
     lines.append(
-        "归档：待打包 %.1f MB，已归档 %.1f MB，批次 %d"
+        "归档：待打包 %s，已归档 %s，批次 %d"
         % (
-            archive.get("pending_mb", 0.0),
-            archive.get("archive_mb", 0.0),
+            _format_size(archive.get("pending_mb", 0.0)),
+            _format_size(archive.get("archive_mb", 0.0)),
             archive.get("batches", 0),
         )
     )

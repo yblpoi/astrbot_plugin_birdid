@@ -112,3 +112,30 @@ def test_status_marks_an_offline_backend():
     )
     assert "状态：离线" in text
     assert "（未加载）" in text
+
+
+def test_status_keeps_a_small_archive_readable():
+    text = format_status(
+        online=True,
+        health={"status": "ok", "pending": 0, "max_queue": 32},
+        queue=0,
+        running=0,
+        archive={"pending_mb": 49.3 / 1024, "archive_mb": 0.0, "batches": 1},
+        names={"count": 11587, "loaded": True},
+    )
+    assert "待打包 49.3 KB" in text
+    assert "已归档 0 KB" in text
+    assert "批次 1" in text
+
+
+def test_status_uses_megabytes_once_the_archive_grows():
+    text = format_status(
+        online=True,
+        health={},
+        queue=0,
+        running=0,
+        archive={"pending_mb": 3.4, "archive_mb": 48.7, "batches": 6},
+        names={"count": 10, "loaded": True},
+    )
+    assert "待打包 3.4 MB" in text
+    assert "已归档 48.7 MB" in text

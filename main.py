@@ -244,7 +244,7 @@ class BirdIdPlugin(Star):
         archive_stats = {
             "pending_mb": self._archive.pending_bytes() / (1024 * 1024),
             "archive_mb": self._archive.archive_bytes() / (1024 * 1024),
-            "batches": len(list(self._archive.archive_root.glob("*/"))),
+            "batches": len(list(self._archive.archive_root.glob("*/*.tar.gz"))),
         }
         text = format_status(
             online=online,
