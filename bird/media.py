@@ -28,6 +28,7 @@ __all__ = [
     "MAX_IMAGE_BYTES",
     "MediaItem",
     "collect_media",
+    "has_media",
     "normalize_image",
     "probe_kind",
     "audio_duration_seconds",
@@ -212,6 +213,31 @@ def _walk_components(event) -> Iterable:
         yield component, "message"
 
 
+#: Component names that may carry an attachment worth identifying.
+_MEDIA_COMPONENTS = frozenset({"Image", "Record", "File", "Video"})
+
+
+def has_media(event) -> bool:
+    """Report whether a message carries an attachment, without touching disk.
+
+    The plugin answers bare attachment messages itself instead of letting the
+    language model see them, so it has to decide on every message it is offered.
+    Only component names are inspected: nothing is downloaded, decoded or
+    written to the temporary directory.
+
+    Args:
+        event: Message event to inspect.
+
+    Returns:
+        True when the message, or the message it quotes, holds an image,
+        recording, file or video component.
+    """
+    return any(
+        type(component).__name__ in _MEDIA_COMPONENTS
+        for component, _origin in _walk_components(event)
+    )
+
+
 async def collect_media(
     event,
     temp_dir: Path,
@@ -239,7 +265,7 @@ async def collect_media(
         if origin == "quote" and not include_quote:
             continue
         name = type(component).__name__
-        if name not in {"Image", "Record", "File", "Video"}:
+        if name not in _MEDIA_COMPONENTS:
             continue
         path = await _component_to_path(component, temp_dir)
         if path is None:

@@ -6,10 +6,12 @@ reports backend health to administrators only.
 
 Design notes:
 
-* A plain image message activates no handler, so the waking stage stops it and
-  no language model is called. Replies are sent explicitly and the event is
-  then stopped, which keeps the language model out of the loop even when the
-  command itself is a wake message.
+* A bare image or recording sent in a private chat is answered by the local
+  service, never by a language model. Private chats are always treated as wake
+  messages, so this module claims those messages with a listener of its own and
+  stops them instead of leaving them to the default reply path.
+* Replies are sent explicitly and the event is then stopped, which keeps the
+  language model out of the loop even when the message is a wake message.
 * Every file this plugin creates for one request lives in a temporary directory
   that is removed before the handler returns; the archive keeps its own copies.
 * Nothing in a reply names a model, a device or a path on disk.
@@ -165,6 +167,50 @@ class BirdIdPlugin(Star):
 
         Returns:
             None; the reply is sent from inside the handler.
+        """
+        cleaned = (location or "").strip(" ,、，")
+        await self._identify_and_reply(event, cleaned)
+
+    @filter.event_message_type(
+        filter.EventMessageType.PRIVATE_MESSAGE | filter.EventMessageType.GROUP_MESSAGE,
+        priority=-1,
+    )
+    async def auto_image(self, event: AstrMessageEvent) -> None:
+        """Identify attachments that arrive without a command.
+
+        A private chat is always a wake message in AstrBot, so an image sent
+        there would otherwise reach the configured language model. Group
+        images are covered too: they only wake the bot when it was at-ed,
+        and that is exactly the case where the model would see them.
+        Claiming the message here keeps every attachment local.
+
+        The listener ranks below /birds, so a command still wins when both
+        could answer. Messages without an attachment are left alone, which
+        keeps ordinary private conversation working.
+
+        Args:
+            event: Message event that was offered to this listener.
+
+        Returns:
+            None; the reply is sent from inside the handler when one is due.
+        """
+        if not media_tools.has_media(event):
+            return
+        await self._identify_and_reply(event, "")
+
+    async def _identify_and_reply(
+        self,
+        event: AstrMessageEvent,
+        location: str,
+    ) -> None:
+        """Run one identification request and send its reply.
+
+        Args:
+            event: Message event whose attachments are identified.
+            location: Optional place name used as a range hint.
+
+        Returns:
+            None; the reply is sent from inside the helper.
         """
         service = await self._ensure_service()
         if service is None:

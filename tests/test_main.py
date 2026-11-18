@@ -101,3 +101,44 @@ async def test_birds_asks_for_media_when_the_message_has_none(monkeypatch):
     await plugin.birds(event, location="云南")
     assert _text(event) == MEDIA_HINT
     assert event.stopped is True
+
+
+class Image:
+    """Stand in for the platform image component.
+
+    Only the class name is read, so this stub is enough to drive the probe.
+    """
+
+
+async def test_auto_image_leaves_a_message_without_an_attachment_alone():
+    plugin = BirdIdPlugin(context=None, config={})
+    event = FakeEvent()
+    await plugin.auto_image(event)
+    assert event.results == []
+    assert event.stopped is False
+
+
+async def test_auto_image_answers_an_attachment(monkeypatch):
+    plugin = BirdIdPlugin(context=None, config={})
+    seen = []
+
+    async def _capture(event, location):
+        seen.append(location)
+
+    monkeypatch.setattr(plugin, "_identify_and_reply", _capture)
+    event = FakeEvent([Image()])
+    await plugin.auto_image(event)
+    assert seen == [""]
+
+
+async def test_birds_passes_a_trimmed_location(monkeypatch):
+    plugin = BirdIdPlugin(context=None, config={})
+    seen = []
+
+    async def _capture(event, location):
+        seen.append(location)
+
+    monkeypatch.setattr(plugin, "_identify_and_reply", _capture)
+    event = FakeEvent()
+    await plugin.birds(event, location=" 云南、四川 ")
+    assert seen == ["云南、四川"]

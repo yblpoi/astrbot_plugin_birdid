@@ -30,9 +30,6 @@ _LOGGER = logging.getLogger(__name__)
 #: Candidates shown per detection.
 MAX_CANDIDATES = 3
 
-#: Detections rendered per request; the rest only appear as text.
-MAX_RENDERED = 3
-
 #: Spectrogram geometry used for audio replies.
 SPECTROGRAM_WIDTH = 900
 SPECTROGRAM_HEIGHT = 420
@@ -215,15 +212,13 @@ class BirdService:
         )
         elapsed_ms = (time.monotonic() - started) * 1000.0
         observations = self._observations(result)
+        # Only the top detection is cropped. A photo holding several targets
+        # would otherwise answer with a stack of pictures, which reads worse
+        # than the ranked list right above it.
         images: List[bytes] = []
-        for detection in result.detections[:MAX_RENDERED]:
-            crop = crop_image(image_path, detection.box, margin_ratio=0.15)
-            if crop is None:
-                continue
-            try:
-                images.append(image_to_jpeg_bytes(crop))
-            except Exception as exc:  # noqa: BLE001 - a crop is optional
-                self._logger.debug("crop encoding failed: %s", exc)
+        crop = self._top_crop(image_path, result)
+        if crop is not None:
+            images.append(crop)
         self._store(
             source="image",
             detection=result.top,
@@ -327,6 +322,40 @@ class BirdService:
             return image_to_jpeg_bytes(image)
         except Exception as exc:  # noqa: BLE001 - the plot is optional
             self._logger.debug("spectrogram rendering failed: %s", exc)
+            return None
+
+    def _top_crop(self, image_path: Path, result: BirdResult) -> Optional[bytes]:
+        """Crop the best target so a reply carries at most one picture.
+
+        A detected bird outranks a better scoring non-bird: the low bird
+        threshold keeps faint bird boxes next to a confident person or
+        background object, and cropping that object would hand the user a
+        picture of the thing the answer is not about.
+
+        Args:
+            image_path: Normalized photo the detections refer to.
+            result: Parsed backend reply.
+
+        Returns:
+            JPEG bytes, or None when nothing could be cropped.
+        """
+        detection = next(
+            (
+                item
+                for item in result.detections
+                if any(species.animal_class == "B" for species in item.species)
+            ),
+            result.top,
+        )
+        if detection is None:
+            return None
+        crop = crop_image(image_path, detection.box, margin_ratio=0.15)
+        if crop is None:
+            return None
+        try:
+            return image_to_jpeg_bytes(crop)
+        except Exception as exc:  # noqa: BLE001 - a crop is optional
+            self._logger.debug("crop encoding failed: %s", exc)
             return None
 
     def _observations(self, result: BirdResult) -> List[Observation]:

@@ -41,27 +41,74 @@ def test_label_falls_back_when_every_name_is_missing():
     assert observation.label() == "未知"
 
 
-def test_reply_lists_the_gate_box_and_the_duration():
+def test_reply_opens_with_the_gate_verdict():
     text = format_reply(
-        [_observation(gate_box=(10, 20, 110, 220), gate_confidence=88.5)],
+        [_observation(gate_box=(10, 20, 110, 220), gate_confidence=30.5)],
         kind="image",
         elapsed_ms=205.6,
     )
-    assert "识别结果" in text
+    lines = text.splitlines()
+    assert lines[0] == "识别结果：鸟类（30.5%）"
     assert "1. 麻雀 / Eurasian Tree Sparrow / Passer montanus  97.5%" in text
-    assert "检测框 10,20-110,220  门禁 88.5%" in text
     assert text.rstrip().endswith("耗时 206 ms")
 
 
-def test_reply_without_gate_box_stays_on_one_line_per_species():
-    text = format_reply([_observation()], kind="audio", elapsed_ms=42.0)
+def test_reply_hides_the_gate_box_coordinates():
+    text = format_reply(
+        [_observation(gate_box=(10, 20, 110, 220), gate_confidence=88.5)],
+        kind="image",
+        elapsed_ms=5.0,
+    )
+    assert "10,20-110,220" not in text
     assert "检测框" not in text
+
+
+def test_reply_groups_candidates_by_their_gate_box():
+    first = _observation(gate_box=(0, 0, 10, 10), gate_confidence=41.0)
+    second = _observation(
+        zh="白喉针尾雨燕",
+        en="White-throated Needletail",
+        scientific="Hirundapus caudacutus",
+        confidence=12.0,
+        gate_box=(20, 20, 90, 90),
+        gate_confidence=7.5,
+    )
+    text = format_reply([first, second], kind="image", elapsed_ms=1.0)
+    lines = text.splitlines()
+    assert lines.count("识别结果：鸟类（41.0%）") == 1
+
+    assert lines.count("识别结果：鸟类（7.5%）") == 1
+    assert "2. 白喉针尾雨燕 / White-throated Needletail / Hirundapus caudacutus  12.0%" in text
+
+
+def test_reply_headings_a_non_bird_with_its_own_name():
+    text = format_reply(
+        [
+            _observation(
+                zh="人",
+                en="person",
+                scientific="person",
+                confidence=30.5,
+                animal_class="M",
+                gate_box=(58, 404, 1931, 1478),
+                gate_confidence=30.5,
+            )
+        ],
+        kind="image",
+        elapsed_ms=1.0,
+    )
+    assert text.splitlines()[0] == "识别结果：人（30.5%）"
+
+
+def test_reply_omits_the_score_when_the_gate_has_none():
+    text = format_reply([_observation()], kind="audio", elapsed_ms=42.0)
+    assert text.splitlines()[0] == "识别结果：鸟类"
     assert "耗时 42 ms" in text
 
 
 def test_reply_explains_an_empty_result():
     text = format_reply([], kind="image", elapsed_ms=12.0)
-    assert "没有识别到鸟类。" in text
+    assert text.splitlines()[0] == "识别结果：未检测到鸟类。"
     assert "耗时 12 ms" in text
 
 

@@ -27,6 +27,7 @@ from bird import service as service_module  # noqa: E402  (path bootstrap)
 from bird.client import BirdResult, Detection, Species  # noqa: E402
 from bird.media import MediaItem  # noqa: E402
 from bird.names import NameResolver  # noqa: E402
+from bird.render import crop_image, image_to_jpeg_bytes  # noqa: E402
 from bird.service import BirdService, ServiceBusy  # noqa: E402
 
 JPEG_SIGNATURE = b"\xff\xd8\xff"
@@ -259,6 +260,69 @@ async def test_identify_image_returns_crop_jpeg(
 
     assert len(reply.images) == 1
     assert reply.images[0].startswith(JPEG_SIGNATURE)
+
+
+async def test_identify_image_crops_only_the_top_detection(
+    image_item, workdir: Path, names, archive, detections
+) -> None:
+    """A photo with several targets answers with a single picture."""
+    extra = Detection(
+        box=(140.0, 20.0, 220.0, 110.0),
+        species=[
+            Species(
+                confidence=71.0,
+                scientific="Ardea cinerea",
+                english="Grey Heron",
+                animal_class="B",
+                common="Ardea cinerea",
+            )
+        ],
+    )
+    service = BirdService(FakeClient(detections + [extra]), names, archive)
+
+    reply = await service.identify([image_item], workdir)
+
+    assert len(reply.observations) == 2
+    assert len(reply.images) == 1
+    assert reply.images[0].startswith(JPEG_SIGNATURE)
+
+
+async def test_identify_image_crops_the_bird_over_a_louder_object(
+    image_item, workdir: Path, names, archive
+) -> None:
+    """A faint bird box wins the crop over a confident non-bird box."""
+    person = Detection(
+        box=(0.0, 0.0, 120.0, 180.0),
+        species=[
+            Species(
+                confidence=91.0,
+                scientific="person",
+                english="person",
+                animal_class="M",
+                common="person",
+            )
+        ],
+    )
+    bird = Detection(
+        box=(120.0, 0.0, 240.0, 180.0),
+        species=[
+            Species(
+                confidence=30.0,
+                scientific="Apus apus",
+                english="Common Swift",
+                animal_class="B",
+                common="Apus apus",
+            )
+        ],
+    )
+    service = BirdService(FakeClient([person, bird]), names, archive)
+
+    reply = await service.identify([image_item], workdir)
+
+    expected = image_to_jpeg_bytes(
+        crop_image(image_item.path, bird.box, margin_ratio=0.15)
+    )
+    assert reply.images == [expected]
 
 
 async def test_identify_image_uploads_jpeg(

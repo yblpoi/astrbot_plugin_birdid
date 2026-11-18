@@ -1,8 +1,10 @@
 """Build the chat reply for an identification.
 
-The reply is deliberately terse. It shows the species the models propose, the
-gate boxes the detector produced, the cropped images and the spectrogram, plus
-how long the request took. It never mentions model names, file paths, device
+The reply is deliberately terse. The gate verdict collapses into one heading,
+``识别结果：鸟类（30.5%）``, followed by the species the classifier proposes and
+their confidence, the cropped images and the spectrogram, plus how long the
+request took. Raw gate boxes never reach the chat: they are training data, not
+something a reader needs. Nothing here mentions model names, file paths, device
 names or any other detail about the machine behind the service.
 """
 
@@ -72,22 +74,49 @@ class Observation:
         return " / ".join(parts) if parts else "未知"
 
 
-def _format_box(box: Optional[Sequence[float]]) -> str:
-    """Format a gate box for display.
+def _group_by_gate(observations: Sequence[Observation]) -> List[List[Observation]]:
+    """Group candidates that came from the same gate box.
+
+    The service emits one gate box per detection and lists its candidates in
+    order, so candidates sharing a box are always adjacent.
 
     Args:
-        box: Four coordinates, or None.
+        observations: Species guesses in display order.
 
     Returns:
-        A compact "x1,y1-x2,y2" string, or an empty string.
+        Groups of adjacent observations, in the original order.
     """
-    if not box or len(box) != 4:
-        return ""
-    try:
-        values = [int(round(float(value))) for value in box]
-    except (TypeError, ValueError):
-        return ""
-    return "%d,%d-%d,%d" % (values[0], values[1], values[2], values[3])
+    groups: List[List[Observation]] = []
+    keys: List[tuple] = []
+    for item in observations:
+        key = tuple(item.gate_box) if item.gate_box else ()
+        if groups and keys[-1] == key:
+            groups[-1].append(item)
+        else:
+            keys.append(key)
+            groups.append([item])
+    return groups
+
+
+def _gate_heading(members: Sequence[Observation]) -> str:
+    """Render the one heading that replaces the raw gate box.
+
+    Args:
+        members: Observations produced by one gate box.
+
+    Returns:
+        A line such as "识别结果：鸟类（30.5%）", or "识别结果：鸟类" when the
+        gate reported no score (recordings).
+    """
+    first = members[0]
+    if first.animal_class == "B":
+        label = "鸟类"
+    else:
+        label = first.zh or first.en or "未知目标"
+    score = first.gate_confidence
+    if score > 0:
+        return "识别结果：%s（%.1f%%）" % (label, score)
+    return "识别结果：%s" % label
 
 
 def format_reply(
@@ -99,6 +128,10 @@ def format_reply(
     truncated: int = 0,
 ) -> str:
     """Render the text half of the reply.
+
+    Each gate box contributes one heading, and the candidates it produced are
+    listed under it, so a reader sees "识别结果：鸟类（30.5%）" instead of the
+    coordinates the gate worked on.
 
     Args:
         observations: Species guesses in display order.
@@ -112,7 +145,7 @@ def format_reply(
     """
     lines: List[str] = []
     if not observations:
-        lines.append("没有识别到鸟类。")
+        lines.append("识别结果：未检测到鸟类。")
         if kind == "image":
             lines.append("可以试试换成主体更清楚、鸟占画面更大的照片。")
         else:
@@ -121,17 +154,12 @@ def format_reply(
         lines.append("耗时 %d ms" % int(round(elapsed_ms)))
         return "\n".join(lines)
 
-    birds = [item for item in observations if item.animal_class == "B"]
-    if birds:
-        lines.append("识别结果")
-    else:
-        lines.append("画面里没有鸟类，检测到的是")
-    for index, item in enumerate(observations, start=1):
-        head = "%d. %s  %.1f%%" % (index, item.label(), item.confidence)
-        lines.append(head)
-        box = _format_box(item.gate_box)
-        if box:
-            lines.append("   检测框 %s  门禁 %.1f%%" % (box, item.gate_confidence))
+    index = 0
+    for group in _group_by_gate(observations):
+        lines.append(_gate_heading(group))
+        for item in group:
+            index += 1
+            lines.append("%d. %s  %.1f%%" % (index, item.label(), item.confidence))
     if truncated > 0:
         lines.append("另有 %d 个候选未列出。" % truncated)
     if location:
