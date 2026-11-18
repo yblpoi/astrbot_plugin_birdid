@@ -78,7 +78,10 @@ def test_reply_groups_candidates_by_their_gate_box():
     assert lines.count("识别结果：鸟类（41.0%）") == 1
 
     assert lines.count("识别结果：鸟类（7.5%）") == 1
-    assert "2. 白喉针尾雨燕 / White-throated Needletail / Hirundapus caudacutus  12.0%" in text
+    assert (
+        "2. 白喉针尾雨燕 / White-throated Needletail / Hirundapus caudacutus  12.0%"
+        in text
+    )
 
 
 def test_reply_headings_a_non_bird_with_its_own_name():
