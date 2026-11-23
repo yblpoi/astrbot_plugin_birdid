@@ -1,11 +1,13 @@
 """Bird identification plugin entry point.
 
-The plugin exposes two surfaces. Chat users reach it through the
-``identify_bird`` LLM tool: the intent is detected by the model, which then
-calls the Dongniao API through this plugin and the answer is delivered straight
-to the chat without the model ever looking at the picture. Administrators get
-one command, ``识鸟状态``, plus a dashboard page that renders the same figures
-as charts and lets them change the switches without editing JSON.
+The plugin exposes three chat surfaces. Common phrasings ("识鸟", "这是什么鸟"
+and friends) are handled by a command filter, so the usual request never wakes
+the model at all. Anything else falls through to the ``identify_bird`` LLM tool:
+the model reads the unusual wording, calls this plugin, and the answer is
+delivered straight to the chat without the model ever looking at the picture.
+Administrators get one more command, ``识鸟状态``, plus a dashboard page that
+renders the same figures as charts and lets them change the switches without
+editing JSON.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import Image, Plain
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.tool import FunctionTool
+from astrbot.core.star.filter.command import GreedyStr
 
 from .bird import hostinfo
 from .bird import media as media_tools
@@ -66,6 +69,29 @@ _BACKEND_TTL_S = 30.0
 
 #: Routes the dashboard page calls through the plugin bridge.
 _ROUTE_PREFIX = "/" + PLUGIN_NAME
+
+#: The command that identifies the media of one message without the model.
+IDENTIFY_COMMAND = "识鸟"
+
+#: Everyday phrasings of the same request. The command filter only matches a
+#: whole message or a message that continues with a space, so these stay
+#: narrow: "这是什么鸟这么吵" is left to the model on purpose.
+IDENTIFY_ALIASES = (
+    "认鸟",
+    "辨鸟",
+    "识别鸟",
+    "识别一下鸟",
+    "帮我认鸟",
+    "帮我识别鸟",
+    "鸟种识别",
+    "识别鸟类",
+    "这是什么鸟",
+    "这什么鸟",
+    "这是啥鸟",
+    "什么鸟",
+    "啥鸟",
+    "看看这是什么鸟",
+)
 
 
 def _tool_event(context: Any) -> Optional[AstrMessageEvent]:
@@ -668,6 +694,32 @@ class BirdIdPlugin(Star):
             self._stats.record_rejected("whitelist")
             return
         await self._identify_and_reply(event, "")
+
+    @filter.command(IDENTIFY_COMMAND, alias=set(IDENTIFY_ALIASES))
+    async def bird_command(self, event: AstrMessageEvent, location: GreedyStr) -> None:
+        """Identify the media of the current message without the model.
+
+        The everyday phrasings listed in IDENTIFY_ALIASES land here, so the
+        usual request costs no tokens: the event never reaches the model. The
+        rest of the message is a free-form location hint, which the recogniser
+        uses to narrow the candidate species.
+
+        Args:
+            event: Message event.
+            location: Everything typed after the command, used as a hint.
+
+        Returns:
+            None
+        """
+        settings = self._settings()
+        if not self._allowed(event, settings)[0]:
+            self._stats.record_rejected("whitelist")
+            await self._reply(event, WHITELIST_HINT)
+            return
+        if not media_tools.has_media(event):
+            await self._reply(event, MEDIA_HINT)
+            return
+        await self._identify_and_reply(event, _as_text(location), trigger="command")
 
     async def identify_for_llm(
         self, event: AstrMessageEvent, location: str = ""

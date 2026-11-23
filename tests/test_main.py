@@ -469,3 +469,52 @@ async def test_db_candidates_reports_an_unreadable_table():
     groups, friends, notes = await plugin._db_candidates()
     assert groups == [] and friends == []
     assert notes == ["会话列表读取不完整，可手动填写会话标识。"]
+
+
+async def test_the_identify_command_is_registered_with_its_aliases():
+    from astrbot.core.star.star_handler import star_handlers_registry
+
+    handler = None
+    for item in star_handlers_registry:
+        if getattr(item.handler, "__name__", "") == "bird_command":
+            handler = item
+            break
+    assert handler is not None
+    command = handler.event_filters[0]
+    assert command.command_name == "识鸟"
+    assert "这是什么鸟" in command.alias
+    assert "啥鸟" in command.alias
+
+
+async def test_command_identifies_with_a_location_hint(monkeypatch):
+    plugin = BirdIdPlugin(context=None, config={})
+    seen = []
+
+    async def _capture(event, location, *, trigger="", stop=True):
+        seen.append((location, trigger, stop))
+
+    monkeypatch.setattr(plugin, "_identify_and_reply", _capture)
+    event = FakeEvent([Image()])
+    await plugin.bird_command(event, " 云南  西双版纳 ")
+    # A plain command stops the event and sends its own answer.
+    assert seen == [("云南 西双版纳", "command", True)]
+
+
+async def test_command_asks_for_media_when_the_message_has_none():
+    plugin = BirdIdPlugin(context=None, config={})
+    event = FakeEvent()
+    await plugin.bird_command(event, "")
+    assert _text(event) == MEDIA_HINT
+    assert event.stopped is True
+
+
+async def test_command_refuses_a_chat_outside_the_whitelist():
+    plugin = BirdIdPlugin(
+        context=None,
+        config={"group_whitelist_enabled": True, "group_whitelist": ["999"]},
+    )
+    event = FakeEvent([Image()], origin="aiocqhttp:group:1")
+    await plugin.bird_command(event, "")
+    assert _text(event) == WHITELIST_HINT
+    assert event.stopped is True
+    assert plugin._stats.rejected["whitelist"] == 1
