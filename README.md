@@ -50,8 +50,8 @@
 4. 重启 AstrBot 或重载插件。启动日志出现 `Bird identification plugin ready with N names.`
    就说明名称表加载成功；同时会看到 `added LLM tool: identify_bird`。
 
-插件只用 AstrBot 的通用事件与消息链接口，不绑定具体适配器：`aiocqhttp`、`qq_official`、
-`wechat_native` 都已实测可用，其它平台只要能收发图片与录音消息即可。
+插件只用 AstrBot 的通用事件与消息链接口，不绑定具体适配器：`aiocqhttp`、`qq_official`
+（含 `qq_official_webhook`）、`wechat_native` 都已实测可用，其它平台只要能收发图片与录音消息即可。
 
 ### 后端要求
 
