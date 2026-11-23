@@ -11,6 +11,7 @@ from bird.client import (
     CODE_NO_ANIMALS,
     CODE_OK,
     CODE_PROCESSING,
+    CODE_QUOTA,
     BirdClient,
     BusyError,
     ClientError,
@@ -151,5 +152,72 @@ async def test_submit_keeps_a_deadline_as_a_timeout(monkeypatch):
     try:
         with pytest.raises(asyncio.TimeoutError):
             await client._submit(form, "image", 1.0)
+    finally:
+        await client.close()
+
+
+async def test_set_max_concurrency_rebuilds_the_semaphore():
+    """Retuning the local budget takes effect on the next request."""
+    client = BirdClient("http://127.0.0.1:9", max_concurrency=2)
+    before = client._semaphore
+    try:
+        client.set_max_concurrency(8)
+        assert client.max_concurrency == 8
+        assert client._semaphore is not before
+        assert client._semaphore._value == 8
+
+        same = client._semaphore
+        client.set_max_concurrency(8)
+        assert client._semaphore is same
+
+        client.set_max_concurrency(-4)
+        assert client.max_concurrency == 1
+    finally:
+        await client.close()
+
+
+async def test_probe_reports_a_local_backend(monkeypatch):
+    client = BirdClient("http://127.0.0.1:9")
+
+    async def _health():
+        return {"status": "ok"}
+
+    monkeypatch.setattr(client, "health", _health)
+    try:
+        assert await client.probe() == "local"
+    finally:
+        await client.close()
+
+
+async def test_probe_reports_an_official_backend_without_healthz(monkeypatch):
+    client = BirdClient("http://127.0.0.1:9")
+
+    async def _health():
+        return {}
+
+    async def _call(fields):
+        raise ClientError(CODE_QUOTA, "daily quota exhausted")
+
+    monkeypatch.setattr(client, "health", _health)
+    monkeypatch.setattr(client, "_call", _call)
+    try:
+        assert await client.probe() == "official"
+    finally:
+        await client.close()
+
+
+async def test_probe_reports_a_dead_endpoint_offline(monkeypatch):
+    client = BirdClient("http://127.0.0.1:9")
+
+    async def _health():
+        return {}
+
+    async def _call(fields):
+        raise ClientError(0, "transport failed")
+
+    monkeypatch.setattr(client, "health", _health)
+    monkeypatch.setattr(client, "_call", _call)
+    try:
+        assert await client.probe() == "offline"
     finally:
         await client.close()

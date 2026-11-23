@@ -1,9 +1,18 @@
 name: astrbot_plugin_birdid
 display_name: 鸟类识别
-desc: 用本地鸟类识别服务识别图片或录音中的鸟，给出中英文名、裁剪图与频谱图
-version: v0.1.0
+desc: 用懂鸟协议的识别服务识别图片或录音中的鸟，给出中英文名、裁剪图与频谱图，并带一个可视化管理看板
+short_desc: 识鸟工具与看板
+version: v0.2.0
 author: yblpoi
 repo: https://github.com/yblpoi/astrbot_plugin_birdid
 astrbot_version: ">=4.0.0"
 support_platforms:
   - aiocqhttp
+  - qq_official
+  - qq_official_webhook
+  - wechat_native
+views:
+  - name: dashboard
+    title: 识鸟看板
+    description: 查看识别统计、负载与内存，并直接在页面里改开关与选项
+    version: 1

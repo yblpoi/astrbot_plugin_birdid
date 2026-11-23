@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>识鸟看板</title>
+<script src="/api/plugin/page/bridge-sdk.js"></script>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--card-subtle:#f8f9fb;--border:#e4e7ec;--text:#101828;--text-muted:#667085;--text-dim:#98a2b3;--primary:#2563eb;--primary-light:#dbeafe;--success:#059669;--success-light:#d1fae5;--warning:#d97706;--warning-light:#fef3c7;--danger:#dc2626;--danger-light:#fee2e2;}
+@media (prefers-color-scheme: dark){:root{--bg:#0f1115;--card:#171a21;--card-subtle:#1d2129;--border:#2a2f3a;--text:#e6e9ef;--text-muted:#98a2b3;--text-dim:#6b7480;--primary:#60a5fa;--primary-light:#1e3a5f;--success:#34d399;--success-light:#0f3d2e;--warning:#fbbf24;--warning-light:#3d2f0f;--danger:#f87171;--danger-light:#3d1616;}}
+*{box-sizing:border-box;}
+body{margin:0;padding:24px;background:var(--bg);color:var(--text);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:16px;}
+.header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+.title-area h1{margin:0;font-size:20px;font-weight:650;letter-spacing:.2px;}
+.sub{margin:4px 0 0;color:var(--text-muted);font-size:12.5px;}
+.header-right{display:flex;align-items:center;gap:10px;}
+.pulse{width:9px;height:9px;border-radius:50%;background:var(--text-dim);box-shadow:0 0 0 0 rgba(37,99,235,.5);}
+.pulse.on{background:var(--success);animation:pulse 2s infinite;}
+.pulse.off{background:var(--danger);}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,.45);}70%{box-shadow:0 0 0 9px rgba(16,185,129,0);}100%{box-shadow:0 0 0 0 rgba(16,185,129,0);}}
+.pulse-label{color:var(--text-muted);font-size:12.5px;}
+.btn{border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;}
+.btn:hover{border-color:var(--primary);color:var(--primary);}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff;}
+.btn.primary:hover{opacity:.9;color:#fff;}
+.err{display:none;padding:10px 12px;border-radius:8px;background:var(--danger-light);color:var(--danger);font-size:13px;}
+.err.show{display:block;}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;}
+.kpi-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;}
+.kpi-label{color:var(--text-muted);font-size:12px;margin-bottom:6px;}
+.kpi-value{font-size:22px;font-weight:650;letter-spacing:.3px;}
+.kpi-sub{color:var(--text-dim);font-size:12px;margin-top:4px;}
+.progress-wrap{height:5px;border-radius:3px;background:var(--card-subtle);margin-top:8px;overflow:hidden;}
+.progress-bar{height:100%;border-radius:3px;background:var(--primary);width:0;}
+.grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:12px;}
+.panel-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px;}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;}
+.panel-title{font-size:14px;font-weight:600;}
+.panel-sub{color:var(--text-dim);font-size:12px;}
+.chart{min-height:120px;}
+.bars{display:flex;align-items:flex-end;gap:6px;height:120px;}
+.bar-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;min-width:0;}
+.bar-track{width:100%;flex:1;min-height:0;display:flex;align-items:flex-end;}
+.bar{width:100%;border-radius:4px 4px 0 0;background:var(--primary);min-height:2px;transition:height .25s;}
+.bar.ok{background:var(--success);}
+.bar.failed{background:var(--danger);}
+.bar-label{font-size:10px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+.bar-value{font-size:10px;color:var(--text-muted);}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--text-muted);}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;}
+.rows{display:flex;flex-direction:column;gap:8px;}
+.row{display:grid;grid-template-columns:132px 1fr 38px;align-items:center;gap:10px;font-size:12.5px;}
+.row .name{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.row .track{height:8px;border-radius:4px;background:var(--card-subtle);overflow:hidden;}
+.row .fill{height:100%;border-radius:4px;background:var(--primary);}
+.row .num{text-align:right;color:var(--text-muted);font-variant-numeric:tabular-nums;}
+.empty{color:var(--text-dim);font-size:12.5px;padding:10px 0;}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;}
+.field{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--card-subtle);}
+.field-head{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.field-label{font-size:13px;font-weight:600;}
+.field-hint{color:var(--text-muted);font-size:12px;margin-top:6px;line-height:1.45;}
+.field-group{margin:0 0 8px;color:var(--text-dim);font-size:12px;letter-spacing:.4px;text-transform:uppercase;}
+.switch{position:relative;display:inline-block;width:40px;height:22px;flex:none;}
+.switch input{opacity:0;width:0;height:0;}
+.slider{position:absolute;inset:0;background:var(--border);border-radius:22px;cursor:pointer;transition:background .2s;}
+.slider:before{content:"";position:absolute;height:16px;width:16px;left:3px;top:3px;background:#fff;border-radius:50%;transition:transform .2s;}
+.switch input:checked + .slider{background:var(--primary);}
+.switch input:checked + .slider:before{transform:translateX(18px);}
+.input{width:100%;margin-top:8px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text);font:inherit;font-size:13px;}
+.input:focus{outline:none;border-color:var(--primary);}
+.segmented{display:inline-flex;flex-wrap:wrap;gap:4px;margin-top:8px;padding:3px;border:1px solid var(--border);border-radius:10px;background:var(--card-subtle);}
+.seg{border:none;background:transparent;color:var(--text-muted);border-radius:7px;padding:5px 12px;font:inherit;font-size:12.5px;cursor:pointer;}
+.seg.on{background:var(--primary);color:#fff;}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.chip{border:1px solid var(--border);background:var(--card);color:var(--text-muted);border-radius:999px;padding:3px 10px;font-size:12px;cursor:pointer;}
+.chip.on{border-color:var(--primary);background:var(--primary-light);color:var(--primary);}
+.panel-sub.bad{color:var(--danger);}
+.chips .empty{padding:2px 0;font-size:12px;}
+.recent{display:flex;flex-direction:column;gap:6px;}
+.recent-item{display:grid;grid-template-columns:64px 72px 1fr auto;gap:10px;align-items:center;font-size:12.5px;padding:6px 8px;border-radius:8px;background:var(--card-subtle);}
+.tag{border-radius:999px;padding:1px 8px;font-size:11px;text-align:center;}
+.tag.ok{background:var(--success-light);color:var(--success);}
+.tag.empty{background:var(--warning-light);color:var(--warning);}
+.tag.failed{background:var(--danger-light);color:var(--danger);}
+.muted{color:var(--text-muted);}
+.num-cell{font-variant-numeric:tabular-nums;color:var(--text-muted);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="header">
+    <div class="title-area">
+      <h1>识鸟看板</h1>
+      <p class="sub" id="subtitle">正在连接…</p>
+    </div>
+    <div class="header-right">
+      <span class="pulse" id="pulse"></span>
+      <span class="pulse-label" id="pulse-label">连接中</span>
+      <button class="btn" id="refresh" type="button">刷新</button>
+    </div>
+  </header>
+  <div class="err" id="err"></div>
+  <section class="kpi-grid" id="kpis"></section>
+  <section class="grid-2">
+    <div class="panel-card"><div class="panel-head"><span class="panel-title">每日识别</span><span class="panel-sub" id="daily-sub"></span></div><div class="chart" id="chart-daily"></div></div>
+    <div class="panel-card"><div class="panel-head"><span class="panel-title">结果分布</span></div><div class="chart" id="chart-outcome"></div></div>
+  </section>
+  <section class="grid-2">
+    <div class="panel-card"><div class="panel-head"><span class="panel-title">近 24 小时</span></div><div class="chart" id="chart-hourly"></div></div>
+    <div class="panel-card"><div class="panel-head"><span class="panel-title">常见鸟种</span></div><div id="species"></div></div>
+  </section>
+  <section class="panel-card">
+    <div class="panel-head"><span class="panel-title">设置</span><span class="panel-sub" id="save-state">改动后立即生效</span></div>
+    <div id="form" class="form"></div>
+  </section>
+  <section class="panel-card">
+    <div class="panel-head"><span class="panel-title">最近识别</span></div>
+    <div class="recent" id="recent"></div>
+  </section>
+</div>
+<script>
+(function(){
+  "use strict";
+  var state = null, fields = null, values = null, chatsData = null, fetchedAt = 0, busy = false;
+
+  function esc(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+  function num(n){ var v = Number(n || 0); return v.toLocaleString(); }
+  function fixed(n, d){ var v = Number(n || 0); return v.toFixed(d); }
+  function ago(sec){
+    var s = Math.max(0, Math.floor(Number(sec) || 0));
+    if (s < 60) return s + " 秒";
+    if (s < 3600) return Math.floor(s / 60) + " 分钟";
+    if (s < 86400) return Math.floor(s / 3600) + " 小时";
+    return Math.floor(s / 86400) + " 天";
+  }
+  function bytes(mb){ var v = Number(mb || 0); return v >= 1024 ? fixed(v/1024,1) + " GB" : fixed(v,1) + " MB"; }
+  function clock(ts){ if(!ts) return ""; var d = new Date(Number(ts) * 1000); return d.toLocaleTimeString(); }
+
+  function getBridge(){ return window.AstrBotPluginPage || window.AstrBotPluginView || null; }
+  function ensureBridge(){
+    return new Promise(function(resolve){
+      var tries = 0;
+      (function poll(){
+        var api = getBridge();
+        if (api) { resolve(api); return; }
+        if (++tries > 40) { resolve(null); return; }
+        setTimeout(poll, 50);
+      })();
+    });
+  }
+  function apiGet(api, endpoint){
+    if (api && typeof api.apiGet === "function") return api.apiGet(endpoint);
+    return fetch("/astrbot_plugin_birdid/" + endpoint, {credentials:"include"}).then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
+  }
+  function apiPost(api, endpoint, body){
+    if (api && typeof api.apiPost === "function") return api.apiPost(endpoint, body);
+    return fetch("/astrbot_plugin_birdid/" + endpoint, {method:"POST",credentials:"include",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(r){ if(!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
+  }
+
+  function showError(msg){ var el = document.getElementById("err"); el.textContent = msg || ""; el.className = msg ? "err show" : "err"; }
+
+  function kpi(label, value, sub, pct, tone){
+    var bar = (pct === null || pct === undefined) ? "" : '<div class="progress-wrap"><div class="progress-bar" style="width:' + Math.max(0, Math.min(100, pct)) + '%;background:' + (tone || "var(--primary)") + '"></div></div>';
+    return '<div class="kpi-card"><div class="kpi-label">' + esc(label) + '</div><div class="kpi-value">' + esc(value) + '</div><div class="kpi-sub">' + esc(sub || "") + '</div>' + bar + '</div>';
+  }
+
+  function renderKpis(){
+    var s = state || {};
+    var st = s.stats || {};
+    var lat = st.latency || {};
+    var svc = s.service || {};
+    var mem = s.memory || {};
+    var be = s.backend || {};
+    var rate = Number(st.success_rate || 0) * 100;
+    var cpuPct = Math.max(0, Math.min(100, Number(mem.percent || 0)));
+    var concurPct = svc.max_in_flight ? (Number(svc.running || 0) / Number(svc.max_in_flight)) * 100 : 0;
+    var html = "";
+    var uptime = st.uptime_s;
+    if (uptime === undefined || uptime === null) uptime = (s.plugin || {}).uptime_s;
+    html += kpi("总识别", num(st.total), "启动至今 · " + ago(uptime), null);
+    html += kpi("成功率", fixed(rate, 1) + "%", "含未检出", rate, "var(--success)");
+    html += kpi("平均耗时", fixed(lat.avg, 0) + " ms", "P95 " + fixed(lat.p95, 0) + " ms", null);
+    html += kpi("并发", (svc.running || 0) + " / " + (svc.max_in_flight || 0), "排队 " + (svc.queue || 0) + " 个", concurPct, "var(--warning)");
+    html += kpi("内存", bytes(mem.rss_mb), "系统 " + bytes(mem.used_mb) + " / " + bytes(mem.total_mb), cpuPct, cpuPct > 85 ? "var(--danger)" : "var(--primary)");
+    var beKind = be.kind || (be.online ? "local" : "offline");
+    var beLabel = beKind === "official" ? "官方" : (beKind === "local" ? "在线" : "离线");
+    var beSub = beKind === "official" ? "懂鸟官方接口" : (be.version ? ("版本 " + be.version) : (beKind === "local" ? "本地服务" : "无响应"));
+    html += kpi("后端", beLabel, beSub, null);
+    document.getElementById("kpis").innerHTML = html;
+  }
+
+  function renderDaily(){
+    var rows = ((state && state.stats && state.stats.daily) || []).slice(-14);
+    var host = document.getElementById("chart-daily");
+    document.getElementById("daily-sub").textContent = rows.length ? rows.length + " 天" : "";
+    if (!rows.length){ host.innerHTML = '<div class="empty">还没有识别记录。</div>'; return; }
+    var max = 1;
+    rows.forEach(function(r){ max = Math.max(max, Number(r.total || 0)); });
+    var bars = '<div class="bars">';
+    rows.forEach(function(r){
+      var total = Number(r.total || 0);
+      var failed = Number(r.failed || 0);
+      var h = Math.round((total / max) * 100);
+      bars += '<div class="bar-col" title="' + esc(r.date) + ' 共 ' + total + ' 次">';
+      bars += '<div class="bar-value">' + (total || "") + '</div>';
+      bars += '<div class="bar-track"><div class="bar ' + (failed > 0 ? "failed" : "ok") + '" style="height:' + Math.max(2, h) + '%"></div></div>';
+      bars += '<div class="bar-label">' + esc(String(r.date || "").slice(5)) + '</div>';
+      bars += '</div>';
+    });
+    bars += '</div>';
+    host.innerHTML = bars + '<div class="legend"><span><i style="background:var(--success)"></i>全部成功</span><span><i style="background:var(--danger)"></i>含失败</span></div>';
+  }
+
+  function renderOutcome(){
+    var st = (state && state.stats) || {};
+    var map = st.by_outcome || {};
+    var labels = {ok:"成功", empty:"未检出", busy:"繁忙", timeout:"超时", unavailable:"不可用", invalid:"附件异常", error:"内部错误"};
+    var rows = [];
+    Object.keys(map).forEach(function(k){ rows.push({key:k, label:labels[k] || k, count:Number(map[k] || 0)}); });
+    rows.sort(function(a,b){ return b.count - a.count; });
+    var host = document.getElementById("chart-outcome");
+    if (!rows.length){ host.innerHTML = '<div class="empty">还没有识别记录。</div>'; return; }
+    var max = 1; rows.forEach(function(r){ max = Math.max(max, r.count); });
+    var html = '<div class="rows">';
+    rows.forEach(function(r){
+      var pct = Math.round((r.count / max) * 100);
+      var tone = r.key === "ok" ? "var(--success)" : (r.key === "empty" ? "var(--warning)" : "var(--danger)");
+      html += '<div class="row"><span class="name">' + esc(r.label) + '</span><span class="track"><span class="fill" style="width:' + pct + '%;background:' + tone + '"></span></span><span class="num">' + num(r.count) + '</span></div>';
+    });
+    html += '</div>';
+    var rejected = st.rejected || {};
+    var parts = [];
+    if (rejected.whitelist) parts.push("白名单拦截 " + num(rejected.whitelist));
+    if (rejected.disabled) parts.push("自动回复关闭跳过 " + num(rejected.disabled));
+    var triggers = st.by_trigger || {};
+    ["auto", "tool", "command"].forEach(function(k){ if (triggers[k]) parts.push((k === "auto" ? "自动" : (k === "tool" ? "工具" : "命令")) + " " + num(triggers[k])); });
+    if (parts.length) html += '<div class="legend">' + parts.map(function(p){ return "<span>" + esc(p) + "</span>"; }).join("") + '</div>';
+    host.innerHTML = html;
+  }
+
+  function renderHourly(){
+    var rows = ((state && state.stats && state.stats.hourly) || []);
+    var host = document.getElementById("chart-hourly");
+    if (!rows.length){ host.innerHTML = '<div class="empty">还没有识别记录。</div>'; return; }
+    var max = 1; rows.forEach(function(r){ max = Math.max(max, Number(r.count || 0)); });
+    var bars = '<div class="bars">';
+    rows.forEach(function(r){
+      var c = Number(r.count || 0);
+      var h = Math.round((c / max) * 100);
+      bars += '<div class="bar-col" title="' + esc(r.hour) + ' · ' + c + ' 次">';
+      bars += '<div class="bar-track"><div class="bar" style="height:' + Math.max(2, h) + '%"></div></div>';
+      bars += '<div class="bar-label">' + esc(String(r.hour || "").slice(11)) + '</div>';
+      bars += '</div>';
+    });
+    bars += '</div>';
+    host.innerHTML = bars;
+  }
+
+  function renderSpecies(){
+    var rows = ((state && state.stats && state.stats.top_species) || []);
+    var host = document.getElementById("species");
+    if (!rows.length){ host.innerHTML = '<div class="empty">还没有识别出鸟种。</div>'; return; }
+    var max = 1; rows.forEach(function(r){ max = Math.max(max, Number(r.count || 0)); });
+    var html = '<div class="rows">';
+    rows.forEach(function(r){
+      var pct = Math.round((Number(r.count || 0) / max) * 100);
+      html += '<div class="row"><span class="name" title="' + esc(r.name) + '">' + esc(r.name) + '</span><span class="track"><span class="fill" style="width:' + pct + '%"></span></span><span class="num">' + num(r.count) + '</span></div>';
+    });
+    html += '</div>';
+    host.innerHTML = html;
+  }
+
+  function renderRecent(){
+    var rows = ((state && state.stats && state.stats.recent) || []);
+    var host = document.getElementById("recent");
+    if (!rows.length){ host.innerHTML = '<div class="empty">还没有识别记录。</div>'; return; }
+    var html = "";
+    rows.slice(0, 12).forEach(function(r){
+      var tone = r.outcome === "ok" ? "ok" : (r.outcome === "empty" ? "empty" : "failed");
+      var species = r.species ? r.species : (r.error ? r.error : "—");
+      html += '<div class="recent-item"><span class="muted">' + esc(clock(r.ts)) + '</span>';
+      html += '<span class="tag ' + tone + '">' + esc(r.outcome) + '</span>';
+      html += '<span title="' + esc(species) + '">' + esc(species) + '</span>';
+      html += '<span class="num-cell">' + (r.ms ? num(r.ms) + " ms" : "") + '</span></div>';
+    });
+    host.innerHTML = html;
+  }
+
+  var pending = {}, flushing = false, lastEditAt = 0, renderedSig = "";
+
+  function currentValue(key){ return values ? values[key] : undefined; }
+  function setValue(key, value){ if (!values) values = {}; values[key] = value; }
+
+  function candidatesFor(key){
+    if (!chatsData) return [];
+    var list = key === "group_whitelist" ? (chatsData.groups || []) : (chatsData.friends || []);
+    return list.slice(0, 80);
+  }
+
+  function shortId(id){
+    var s = String(id || "");
+    if (s.length <= 18) return s;
+    var parts = s.split(":");
+    var tail = parts[parts.length - 1];
+    if (tail && tail.length <= 18) return tail;
+    return s.slice(0, 16) + "…";
+  }
+
+  function setSaveState(text, bad){
+    var el = document.getElementById("save-state");
+    if (!el) return;
+    el.textContent = text;
+    el.className = bad ? "panel-sub bad" : "panel-sub";
+  }
+
+  function formSignature(){
+    try { return JSON.stringify([values || null, (fields || []).length]); } catch (e) { return ""; }
+  }
+
+  function renderForm(){
+    if (!fields || !values) return;
+    var host = document.getElementById("form");
+    var html = "";
+    var lastGroup = null;
+    fields.forEach(function(f){
+      if (f.group !== lastGroup){
+        html += '<div class="field-group" style="grid-column:1/-1;margin:2px 0 0">' + esc(f.group || "") + '</div>';
+        lastGroup = f.group;
+      }
+      var value = currentValue(f.key);
+      html += '<div class="field" data-key="' + esc(f.key) + '">';
+      if (f.type === "bool"){
+        html += '<div class="field-head"><span class="field-label">' + esc(f.label) + '</span><label class="switch"><input type="checkbox" data-bool="' + esc(f.key) + '"' + (value ? " checked" : "") + '><span class="slider"></span></label></div>';
+      } else {
+        html += '<div class="field-head"><span class="field-label">' + esc(f.label) + '</span></div>';
+      }
+      html += '<div class="field-hint">' + esc(f.hint || "") + '</div>';
+      if (f.type === "select"){
+        html += '<div class="segmented" data-select="' + esc(f.key) + '">';
+        (f.options || []).forEach(function(opt){
+          var val = String(opt.value || "");
+          var on = String(value == null ? "" : value) === val;
+          html += '<button type="button" class="seg' + (on ? " on" : "") + '" data-seg="' + esc(f.key) + '" data-value="' + esc(val) + '">' + esc(opt.label || val) + '</button>';
+        });
+        html += '</div>';
+      } else if (f.type === "multi"){
+        var picked = Array.isArray(value) ? value.map(String) : [];
+        var rows = candidatesFor(f.key);
+        var seen = {};
+        var chips = [];
+        rows.forEach(function(row){
+          var id = String(row.id || "");
+          if (!id || seen[id]) return;
+          seen[id] = true;
+          chips.push({id: id, name: row.name || id});
+        });
+        picked.forEach(function(id){
+          if (seen[id]) return;
+          seen[id] = true;
+          chips.push({id: id, name: "", manual: true});
+        });
+        if (!chips.length){
+          html += '<div class="chips"><span class="empty">还没有可选的会话，先让机器人在群里说句话或点击刷新。</span></div>';
+        } else {
+          html += '<div class="chips" data-chips="' + esc(f.key) + '">';
+          chips.forEach(function(row){
+            var on = picked.indexOf(row.id) >= 0;
+            var label = row.manual ? shortId(row.id) : (row.name || shortId(row.id));
+            var title = row.manual ? row.id + "（配置里已有这一项）" : (row.name ? row.name + " · " + row.id : row.id);
+            html += '<button type="button" class="chip' + (on ? " on" : "") + '" data-chip="' + esc(f.key) + '" data-id="' + esc(row.id) + '" title="' + esc(title) + '">' + esc(label) + '</button>';
+          });
+          html += '</div>';
+        }
+      }
+      html += '</div>';
+    });
+    host.innerHTML = html;
+    renderedSig = formSignature();
+    host.querySelectorAll("[data-bool]").forEach(function(el){
+      el.addEventListener("change", function(){ commit(el.getAttribute("data-bool"), !!el.checked); });
+    });
+    host.querySelectorAll("[data-seg]").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        var key = btn.getAttribute("data-seg");
+        var group = host.querySelector('[data-select="' + key + '"]');
+        if (!group) return;
+        group.querySelectorAll("[data-seg]").forEach(function(other){ other.className = "seg"; });
+        btn.className = "seg on";
+        commit(key, btn.getAttribute("data-value"));
+      });
+    });
+    host.querySelectorAll("[data-chip]").forEach(function(btn){
+      btn.addEventListener("click", function(){
+        var key = btn.getAttribute("data-chip");
+        var id = btn.getAttribute("data-id");
+        var list = Array.isArray(currentValue(key)) ? currentValue(key).map(String) : [];
+        var idx = list.indexOf(id);
+        if (idx >= 0) list.splice(idx, 1); else list.push(id);
+        btn.className = idx >= 0 ? "chip" : "chip on";
+        commit(key, list);
+      });
+    });
+  }
+
+  function commit(key, value){
+    if (!key) return;
+    setValue(key, value);
+    pending[key] = value;
+    lastEditAt = Date.now();
+    setSaveState("保存中…", false);
+    flush();
+  }
+
+  function flush(){
+    if (flushing) return;
+    var keys = Object.keys(pending);
+    if (!keys.length) return;
+    var patch = {};
+    keys.forEach(function(k){ patch[k] = pending[k]; delete pending[k]; });
+    flushing = true;
+    ensureBridge().then(function(api){
+      return apiPost(api, "settings", {values: patch}).then(function(data){
+        if (data && data.status === "error"){
+          setSaveState("保存失败：" + (data.message || "未知错误"), true);
+          return null;
+        }
+        if (data && data.values){
+          values = data.values;
+          Object.keys(pending).forEach(function(k){ values[k] = pending[k]; });
+        }
+        if (data && data.fields) fields = data.fields;
+        if (Object.keys(pending).length === 0){
+          renderForm();
+          setSaveState("已保存 " + new Date().toLocaleTimeString(), false);
+          showError("");
+        }
+        return null;
+      });
+    }).catch(function(e){
+      setSaveState("保存失败：" + (e && e.message ? e.message : e), true);
+    }).then(function(){ flushing = false; if (Object.keys(pending).length) flush(); });
+  }
+
+  function renderMeta(){
+    var s = state || {};
+    var st = s.stats || {};
+    var be = s.backend || {};
+    var pulse = document.getElementById("pulse");
+    var label = document.getElementById("pulse-label");
+    if (be.online){ pulse.className = "pulse on"; label.textContent = "后端在线"; }
+    else { pulse.className = "pulse off"; label.textContent = "后端离线"; }
+    var bits = [];
+    if (s.plugin && s.plugin.version) bits.push(s.plugin.version);
+    bits.push("已运行 " + ago(st.uptime_s));
+    bits.push("名称库 " + num((s.names || {}).count) + " 条");
+    bits.push("归档" + ((s.archive || {}).enabled ? "开启" : "关闭"));
+    if (fetchedAt) bits.push("更新于 " + new Date(fetchedAt).toLocaleTimeString());
+    document.getElementById("subtitle").textContent = bits.join(" · ");
+  }
+
+  function renderAll(){ renderMeta(); renderKpis(); renderDaily(); renderOutcome(); renderHourly(); renderSpecies(); renderRecent(); }
+
+  function load(){
+    if (busy) return;
+    busy = true;
+    ensureBridge().then(function(api){
+      return apiGet(api, "overview").then(function(data){
+        if (!data || typeof data !== "object") throw new Error("返回内容为空");
+        state = data;
+        fetchedAt = Date.now();
+        var fresh = data.settings || null;
+        showError("");
+        renderAll();
+        if (!fields){
+          return apiGet(api, "settings").then(function(settings){
+            if (settings && settings.fields){
+              fields = settings.fields;
+              if (settings.values) values = settings.values;
+              renderForm();
+            }
+          });
+        }
+        if (fresh && !isEditing()) applyServerValues(fresh);
+        return null;
+      });
+    }).catch(function(e){ showError("读取状态失败：" + (e && e.message ? e.message : e)); })
+      .then(function(){ busy = false; });
+  }
+
+  function isEditing(){
+    return Object.keys(pending).length > 0 || flushing || (Date.now() - lastEditAt) < 1500;
+  }
+
+  function applyServerValues(fresh){
+    values = fresh;
+    var sig = formSignature();
+    if (sig !== renderedSig) renderForm();
+  }
+
+  function loadChats(){
+    ensureBridge().then(function(api){
+      return apiGet(api, "chats").then(function(data){
+        chatsData = data || {};
+        if (!isEditing()) renderForm();
+      });
+    }).catch(function(e){ showError("读取会话列表失败：" + (e && e.message ? e.message : e)); });
+  }
+
+  document.getElementById("refresh").addEventListener("click", function(){ load(); loadChats(); });
+  load();
+  loadChats();
+  setInterval(load, 5000);
+})();
+</script>
+</body>
+</html>

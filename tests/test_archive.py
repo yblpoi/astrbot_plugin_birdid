@@ -316,6 +316,30 @@ class ArchiveStoreTestCase(unittest.TestCase):
 
         asyncio.run(_run())
 
+    def test_run_forever_reads_the_interval_each_pass(self) -> None:
+        """Retuning interval_s ends a long sleep at the next pass boundary."""
+
+        async def _run() -> None:
+            task = asyncio.ensure_future(self.store.run_forever(30))
+            # Let the first pass run, then ask the loop to stop after it.
+            await asyncio.sleep(0.02)
+            self.store.interval_s = 0
+            await asyncio.wait_for(task, timeout=1.0)
+            self.assertIsNone(task.result())
+
+        asyncio.run(_run())
+
+    def test_interval_defaults_and_follows_the_constructor(self) -> None:
+        """The constructor argument is mirrored on the attribute."""
+
+        async def _run() -> None:
+            event = asyncio.Event()
+            asyncio.get_running_loop().call_later(0.01, event.set)
+            await self.store.run_forever(0.05, event)
+
+        asyncio.run(_run())
+        self.assertAlmostEqual(self.store.interval_s, 0.05)
+
     def test_archive_output_never_contains_absolute_paths(self) -> None:
         self._record(location=str(self.base / "pic.jpg"))
         self.store.flush(now=FIXED_NOW)
@@ -361,6 +385,23 @@ class ArchiveStoreTestCase(unittest.TestCase):
         self.assertEqual(ArchiveStore(self.base).retention_days, 14)
         self.assertEqual(ArchiveStore(self.base).max_total_bytes, 2 * 1024**3)
         self.assertEqual(ArchiveStore(self.base).staging_root, self.base / "staging")
+        self.assertTrue(ArchiveStore(self.base).enabled)
+
+    def test_disabled_store_keeps_nothing_on_disk(self) -> None:
+        store = ArchiveStore(self.base, enabled=False, logger=_quiet_logger())
+
+        payload = store.record(
+            source="image",
+            species={"zh": "白鹭"},
+            media=[("frame.jpg", b"fake-jpeg-bytes")],
+            now=FIXED_NOW,
+        )
+
+        self.assertIsNone(payload)
+        self.assertEqual(sorted(self.base.iterdir()), [])
+        self.assertEqual(store.pending_bytes(), 0)
+        self.assertEqual(store.flush(now=FIXED_NOW), [])
+        self.assertFalse(store.archive_root.exists())
 
 
 if __name__ == "__main__":

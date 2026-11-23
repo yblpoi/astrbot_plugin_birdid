@@ -189,3 +189,17 @@ def test_status_uses_megabytes_once_the_archive_grows():
     )
     assert "待打包 3.4 MB" in text
     assert "已归档 48.7 MB" in text
+
+
+def test_status_says_official_when_the_endpoint_has_no_health_document():
+    text = format_status(
+        online=False,
+        health={},
+        queue=0,
+        running=0,
+        archive={},
+        names={"count": 0, "loaded": True},
+        backend_kind="official",
+    )
+    assert "状态：官方" in text
+    assert "状态：离线" not in text

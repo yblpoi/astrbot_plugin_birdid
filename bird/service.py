@@ -17,11 +17,12 @@ from typing import List, Optional, Sequence
 
 from . import media as media_tools
 from .archive import ArchiveStore
-from .client import BirdClient, BirdResult
+from .client import BirdClient, BirdResult, normalize_class
 from .format import Observation
 from .names import NameResolver
 from .regions import resolve_location
 from .render import crop_image, image_to_jpeg_bytes, spectrogram_image
+from .settings import normalize_image_mode
 
 __all__ = ["BirdService", "PreparedReply", "ServiceBusy"]
 
@@ -76,7 +77,12 @@ class BirdService:
         *,
         max_in_flight: int = 2,
         request_timeout_s: float = 30.0,
+        queue_timeout_s: float = 20.0,
         ffmpeg: str = "",
+        class_code: str = "B",
+        area_code: str = "",
+        did: str = "",
+        image_mode: str = "all",
         logger: Optional[logging.Logger] = None,
     ) -> None:
         """Prepare the service without starting background work.
@@ -87,7 +93,15 @@ class BirdService:
             archive: Observation archive.
             max_in_flight: Requests this plugin processes at the same time.
             request_timeout_s: Deadline handed to the backend client.
+            queue_timeout_s: How long a request may wait for a free slot
+                before the caller is told the plugin is busy.
             ffmpeg: Optional ffmpeg command used to decode recordings.
+            class_code: Element selector forwarded to the service; B keeps
+                the answer on birds.
+            area_code: Optional Dongniao region code used as a prior.
+            did: Optional device identifier forwarded to the service.
+            image_mode: Which generated pictures a reply may carry; one of
+                all, crop, spectrogram or off.
             logger: Optional logger override.
         """
         self.client = client
@@ -95,12 +109,33 @@ class BirdService:
         self.archive = archive
         self.max_in_flight = max(1, int(max_in_flight))
         self.request_timeout_s = max(1.0, float(request_timeout_s))
+        self.queue_timeout_s = max(0.0, float(queue_timeout_s))
+        self.class_code = normalize_class(class_code) or "B"
+        self.area_code = (area_code or "").strip()
+        self.did = (did or "").strip()
+        self.image_mode = normalize_image_mode(image_mode)
         self._ffmpeg = ffmpeg
         self._logger = logger or _LOGGER
         self._slots = asyncio.Semaphore(self.max_in_flight)
         self._waiting = 0
         self._running = 0
         self._lock = asyncio.Lock()
+
+    def set_max_in_flight(self, limit: int) -> None:
+        """Change how many requests may run at once.
+
+        Args:
+            limit: New budget; values below one are treated as one.
+
+        Returns:
+            None. The semaphore is rebuilt, so requests already running keep
+            their slot until they finish and new ones use the new budget.
+        """
+        value = max(1, int(limit))
+        if value == self.max_in_flight:
+            return
+        self.max_in_flight = value
+        self._slots = asyncio.Semaphore(value)
 
     @property
     def waiting(self) -> int:
@@ -113,16 +148,33 @@ class BirdService:
         return self._running
 
     async def _enter(self) -> None:
-        """Take a worker slot, counting the wait.
+        """Take a worker slot, counting the wait and giving up in time.
+
+        The wait is bounded so a burst of messages cannot queue behind the
+        backend forever: past the budget the caller is told the plugin is
+        busy instead of holding a chat request open.
 
         Returns:
             None
+
+        Raises:
+            ServiceBusy: No slot became free within the wait budget.
         """
         self._waiting += 1
         try:
-            await self._slots.acquire()
+            if self.queue_timeout_s <= 0:
+                await self._slots.acquire()
+            else:
+                try:
+                    await asyncio.wait_for(
+                        self._slots.acquire(), timeout=self.queue_timeout_s
+                    )
+                except asyncio.TimeoutError:
+                    raise ServiceBusy(
+                        "waited %ss for a worker slot" % self.queue_timeout_s
+                    ) from None
         finally:
-            self._waiting -= 1
+            self._waiting = max(0, self._waiting - 1)
         async with self._lock:
             self._running += 1
 
@@ -164,11 +216,15 @@ class BirdService:
             kind = "audio"
         else:
             raise ValueError("no media")
-        if self._slots.locked():
-            raise ServiceBusy("every worker slot is busy")
+        # The slot is taken under a deadline inside _enter; checking
+        # _slots.locked() first would be a race that rejects a request even
+        # when a slot is about to become free.
         await self._enter()
         try:
             area, place = resolve_location(location) if location else (None, "")
+            # An explicit argument wins over the configured region code, so a
+            # per-message location keeps working when a default is set.
+            area = area or self.area_code or None
             if kind == "image":
                 return await self._identify_image(
                     items, workdir, area, place, started, request_id
@@ -208,6 +264,8 @@ class BirdService:
             payload,
             filename="upload.jpg",
             area=area or "",
+            class_code=self.class_code,
+            did=self.did,
             deadline_s=self.request_timeout_s,
         )
         elapsed_ms = (time.monotonic() - started) * 1000.0
@@ -216,9 +274,10 @@ class BirdService:
         # would otherwise answer with a stack of pictures, which reads worse
         # than the ranked list right above it.
         images: List[bytes] = []
-        crop = self._top_crop(image_path, result)
-        if crop is not None:
-            images.append(crop)
+        if self.image_mode in ("all", "crop"):
+            crop = self._top_crop(image_path, result)
+            if crop is not None:
+                images.append(crop)
         self._store(
             source="image",
             detection=result.top,
@@ -269,14 +328,16 @@ class BirdService:
             payload,
             filename="upload.wav",
             area=area or "",
+            did=self.did,
             deadline_s=self.request_timeout_s,
         )
         elapsed_ms = (time.monotonic() - started) * 1000.0
         observations = self._observations(result)
         images: List[bytes] = []
-        spectrogram = self._spectrogram(wav_path)
-        if spectrogram is not None:
-            images.append(spectrogram)
+        if self.image_mode in ("all", "spectrogram"):
+            spectrogram = self._spectrogram(wav_path)
+            if spectrogram is not None:
+                images.append(spectrogram)
         self._store(
             source="audio",
             detection=result.top if result.detections else None,

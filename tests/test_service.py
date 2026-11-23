@@ -40,6 +40,8 @@ class FakeClient:
         self.detections = list(detections or [])
         self.images: list = []
         self.sounds: list = []
+        self.classes: list = []
+        self.device_ids: list = []
         self.health_calls = 0
         self._gate = gate
 
@@ -56,10 +58,14 @@ class FakeClient:
         area: str = "",
         latitude=None,
         longitude=None,
+        class_code: str = "",
+        did: str = "",
         deadline_s=None,
     ) -> BirdResult:
         """Record the upload and return the canned detections."""
         self.images.append((image_bytes, filename, area, deadline_s))
+        self.classes.append(class_code)
+        self.device_ids.append(did)
         if self._gate is not None:
             await self._gate.wait()
         return BirdResult(detections=self.detections, kind="image", elapsed_ms=1.0)
@@ -72,10 +78,12 @@ class FakeClient:
         area: str = "",
         latitude=None,
         longitude=None,
+        did: str = "",
         deadline_s=None,
     ) -> BirdResult:
         """Record the upload and return the canned detections."""
         self.sounds.append((sound_bytes, filename, area, deadline_s))
+        self.device_ids.append(did)
         if self._gate is not None:
             await self._gate.wait()
         return BirdResult(detections=self.detections, kind="audio", elapsed_ms=1.0)
@@ -416,13 +424,72 @@ async def test_identify_audio_renders_spectrogram(
     assert reply.images[0].startswith(JPEG_SIGNATURE)
 
 
+async def test_image_mode_off_sends_text_only(
+    image_item, workdir: Path, names, archive, detections
+) -> None:
+    """A switched off picture mode keeps the observation but drops media."""
+    service = BirdService(FakeClient(detections), names, archive, image_mode="off")
+
+    reply = await service.identify([image_item], workdir)
+
+    assert reply.images == []
+    assert len(reply.observations) == 1
+
+
+async def test_image_mode_spectrogram_drops_the_photo_crop(
+    image_item, workdir: Path, names, archive, detections
+) -> None:
+    """A recording only mode sends no crop for a picture request."""
+    service = BirdService(
+        FakeClient(detections), names, archive, image_mode="spectrogram"
+    )
+
+    reply = await service.identify([image_item], workdir)
+
+    assert reply.images == []
+
+
+async def test_image_mode_off_drops_the_spectrogram(
+    audio_item, workdir: Path, names, archive, detections, patch_transcode
+) -> None:
+    """A recording reply follows the same switch as a picture reply."""
+    service = BirdService(FakeClient(detections), names, archive, image_mode="off")
+
+    reply = await service.identify([audio_item], workdir)
+
+    assert reply.images == []
+    assert reply.kind == "audio"
+
+
+async def test_image_mode_crop_drops_the_spectrogram(
+    audio_item, workdir: Path, names, archive, detections, patch_transcode
+) -> None:
+    """A photos only mode never draws a recording."""
+    service = BirdService(FakeClient(detections), names, archive, image_mode="crop")
+
+    reply = await service.identify([audio_item], workdir)
+
+    assert reply.images == []
+
+
+def test_image_mode_is_normalised_on_the_service(names, archive) -> None:
+    """A hand written config value still lands on a known mode."""
+    service = BirdService(FakeClient(), names, archive, image_mode="仅照片")
+
+    assert service.image_mode == "crop"
+
+
 async def test_identify_raises_service_busy_when_saturated(
     tmp_path: Path, image_item, names, archive, detections
 ) -> None:
     """A third request is refused at once while two are in flight."""
     gate = asyncio.Event()
     service = BirdService(
-        FakeClient(detections, gate=gate), names, archive, max_in_flight=2
+        FakeClient(detections, gate=gate),
+        names,
+        archive,
+        max_in_flight=2,
+        queue_timeout_s=0.05,
     )
     workdirs = []
     for index in range(2):
@@ -528,3 +595,29 @@ async def test_constructor_clamps_limits(names, archive) -> None:
 
     assert service.max_in_flight == 1
     assert service.request_timeout_s == 1.0
+
+
+async def test_set_max_in_flight_rebuilds_the_slot_semaphore(names, archive) -> None:
+    """Retuning the budget takes effect on the next request."""
+    service = BirdService(FakeClient(), names, archive, max_in_flight=2)
+    before = service._slots
+
+    service.set_max_in_flight(5)
+    assert service.max_in_flight == 5
+    assert service._slots is not before
+    assert service._slots._value == 5
+
+    service.set_max_in_flight(0)
+    assert service.max_in_flight == 1
+
+
+async def test_set_max_in_flight_keeps_the_semaphore_when_unchanged(
+    names, archive
+) -> None:
+    """An unchanged budget must not swap the semaphore under waiting requests."""
+    service = BirdService(FakeClient(), names, archive, max_in_flight=3)
+    before = service._slots
+
+    service.set_max_in_flight(3)
+
+    assert service._slots is before

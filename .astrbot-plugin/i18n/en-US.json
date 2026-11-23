@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "display_name": "Bird ID"
+  },
+  "views": {
+    "dashboard": {
+      "title": "Bird ID dashboard",
+      "description": "Recognition counters, memory and model health, plus the plugin switches and choices"
+    }
+  },
+  "pages": {
+    "dashboard": {
+      "title": "Bird ID dashboard"
+    }
+  }
+}

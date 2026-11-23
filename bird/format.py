@@ -11,7 +11,7 @@ names or any other detail about the machine behind the service.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import Any, List, Mapping, Optional, Sequence
 
 __all__ = ["Observation", "format_reply", "format_status"]
 
@@ -189,6 +189,72 @@ def _format_size(megabytes: float) -> str:
     return "%.1f MB" % value
 
 
+def _format_megabytes(value: Any) -> str:
+    """Render one mebibyte figure tolerantly.
+
+    Args:
+        value: Size in mebibytes; anything unusable renders as zero.
+
+    Returns:
+        The size with a KB or MB unit.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    return _format_size(number)
+
+
+def _format_memory(memory: Optional[Mapping[str, Any]]) -> str:
+    """Render the memory line of the status reply.
+
+    Args:
+        memory: Mapping with process and system memory figures in mebibytes.
+
+    Returns:
+        A one line summary of the plugin process and the host.
+    """
+    if not isinstance(memory, Mapping) or not memory:
+        return "内存：暂不可用"
+    process = _format_megabytes(memory.get("rss_mb", 0.0))
+    used = _format_megabytes(memory.get("used_mb", 0.0))
+    total = _format_megabytes(memory.get("total_mb", 0.0))
+    try:
+        percent = float(memory.get("percent", 0.0))
+    except (TypeError, ValueError):
+        percent = 0.0
+    if not percent:
+        return "内存：插件 %s，系统 %s / %s" % (process, used, total)
+    return "内存：插件 %s，系统 %s / %s（%.0f%%）" % (process, used, total, percent)
+
+
+def _format_models(models: Optional[Mapping[str, Any]]) -> str:
+    """Render the model line of the status reply.
+
+    Args:
+        models: Mapping with a names sequence and an optional status label.
+
+    Returns:
+        A one line summary of the models behind the endpoint.
+    """
+    if not isinstance(models, Mapping):
+        return "模型：未配置"
+    raw = models.get("names")
+    if isinstance(raw, str):
+        candidates = [raw]
+    elif isinstance(raw, (list, tuple)):
+        candidates = [str(item) for item in raw]
+    else:
+        candidates = []
+    labels = [item.strip() for item in candidates if item and item.strip()]
+    label = "、".join(labels) if labels else "未配置"
+    status = models.get("status")
+    status_text = str(status).strip() if status else ""
+    if status_text:
+        return "模型：%s（%s）" % (label, status_text)
+    return "模型：%s" % label
+
+
 def format_status(
     *,
     online: bool,
@@ -198,6 +264,10 @@ def format_status(
     archive: dict,
     names: dict,
     location_hint: str = "",
+    memory: Optional[Mapping[str, Any]] = None,
+    models: Optional[Mapping[str, Any]] = None,
+    toggles: Optional[Mapping[str, Any]] = None,
+    backend_kind: str = "",
 ) -> str:
     """Render the administrator status reply.
 
@@ -209,12 +279,20 @@ def format_status(
         archive: Archive counters.
         names: Name table counters.
         location_hint: Extra note about the location mapping.
+        memory: Optional memory figures; omitted from older replies.
+        models: Optional model identifiers; omitted when unknown.
+        toggles: Optional switch snapshot; omitted when unavailable.
+        backend_kind: "official" when the endpoint speaks the Dongniao
+            protocol but offers no health document.
 
     Returns:
         The status text.
     """
     lines = ["鸟类识别后端"]
-    lines.append("状态：%s" % ("在线" if online else "离线"))
+    if backend_kind == "official":
+        lines.append("状态：官方")
+    else:
+        lines.append("状态：%s" % ("在线" if online else "离线"))
     if health:
         pending = health.get("pending")
         max_queue = health.get("max_queue")
@@ -226,15 +304,19 @@ def format_status(
         state = health.get("status")
         if state:
             lines.append("后端负载：%s" % state)
+    if memory is not None:
+        lines.append(_format_memory(memory))
+    if models is not None:
+        lines.append(_format_models(models))
     lines.append("本插件：排队 %d，处理中 %d" % (queue, running))
-    lines.append(
-        "归档：待打包 %s，已归档 %s，批次 %d"
-        % (
-            _format_size(archive.get("pending_mb", 0.0)),
-            _format_size(archive.get("archive_mb", 0.0)),
-            archive.get("batches", 0),
-        )
+    archive_line = "归档：待打包 %s，已归档 %s，批次 %d" % (
+        _format_size(archive.get("pending_mb", 0.0)),
+        _format_size(archive.get("archive_mb", 0.0)),
+        archive.get("batches", 0),
     )
+    if not archive.get("enabled", True):
+        archive_line += "（已关闭）"
+    lines.append(archive_line)
     lines.append(
         "名称库：%s 条%s"
         % (
@@ -242,6 +324,18 @@ def format_status(
             "" if names.get("loaded") else "（未加载）",
         )
     )
+    if isinstance(toggles, Mapping) and toggles:
+        parts = []
+        for key, label in (
+            ("auto_reply", "自动回复"),
+            ("group_whitelist", "群白名单"),
+            ("private_whitelist", "私聊白名单"),
+        ):
+            if key not in toggles:
+                continue
+            parts.append("%s%s" % (label, "开" if toggles.get(key) else "关"))
+        if parts:
+            lines.append("开关：" + "，".join(parts))
     if location_hint:
         lines.append(location_hint)
     return "\n".join(lines)

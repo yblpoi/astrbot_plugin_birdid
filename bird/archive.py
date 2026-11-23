@@ -329,6 +329,8 @@ class ArchiveStore:
             zero disables the age based rotation.
         max_total_bytes: Soft budget for archive/ in bytes; None or a value
             below one disables the size based rotation.
+        enabled: When false, observations are dropped instead of staged, so
+            nothing reaches the disk.
     """
 
     def __init__(
@@ -337,6 +339,7 @@ class ArchiveStore:
         *,
         retention_days: int = DEFAULT_RETENTION_DAYS,
         max_total_bytes: Optional[int] = DEFAULT_MAX_TOTAL_BYTES,
+        enabled: bool = True,
         logger: Optional[logging.Logger] = None,
     ) -> None:
         """Initialize the store without touching the filesystem.
@@ -345,9 +348,14 @@ class ArchiveStore:
             base_dir: Root folder for staging/ and archive/.
             retention_days: Days to keep packed archives.
             max_total_bytes: Soft size budget for the archive folder.
+            enabled: Whether observations are kept at all.
             logger: Optional logger; the module logger is used by default.
         """
         self.base_dir = Path(base_dir)
+        self.enabled = bool(enabled)
+        #: Delay used by the running maintenance loop; readable so the owner can
+        #: retune it without cancelling the task.
+        self.interval_s = 3600.0
         self.retention_days = max(0, int(retention_days))
         self.max_total_bytes = (
             None if max_total_bytes is None else max(0, int(max_total_bytes))
@@ -403,6 +411,10 @@ class ArchiveStore:
             The stored payload, or None when the record was rejected or could
             not be written.  All failures are logged, never raised.
         """
+        if not self.enabled:
+            # Archiving is turned off, so the observation is discarded instead
+            # of staged: nothing about the request survives on disk.
+            return None
         try:
             with self._lock:
                 if source not in ALLOWED_SOURCES:
@@ -543,13 +555,15 @@ class ArchiveStore:
         delay = _coerce_float(interval_seconds, minimum=0.0)
         if delay is None:
             delay = 3600.0
+        self.interval_s = delay
         try:
             while not event.is_set():
                 # Packing can be slow, so keep it off the event loop thread.
                 await asyncio.to_thread(self.maintain)
-                if delay <= 0:
+                # Read the attribute every pass so a new interval applies.
+                if self.interval_s <= 0:
                     return None
-                await asyncio.sleep(delay)
+                await asyncio.sleep(self.interval_s)
         except asyncio.CancelledError:
             self._logger.debug("Bird archive loop cancelled")
         return None

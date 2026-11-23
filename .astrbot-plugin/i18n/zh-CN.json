@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "display_name": "鸟类识别"
+  },
+  "views": {
+    "dashboard": {
+      "title": "识鸟看板",
+      "description": "查看识别统计、内存与模型状态，并直接调整插件开关与选项"
+    }
+  },
+  "pages": {
+    "dashboard": {
+      "title": "识鸟看板"
+    }
+  }
+}

@@ -8,6 +8,20 @@ AstrBot instance:
 * bird.media -- pull image and audio payloads out of chat messages.
 * bird.render -- cut the detected box and draw spectrograms.
 * bird.archive -- rotate observation media into training archives.
+* bird.settings -- normalise the runtime settings and the access policy.
+* bird.stats -- bounded counters backing the dashboard.
+* bird.hostinfo -- read process and host memory figures.
+* bird.dashboard -- assemble the documents the plugin page renders.
 """
 
-__all__ = ["archive", "client", "media", "names", "render"]
+__all__ = [
+    "archive",
+    "client",
+    "dashboard",
+    "hostinfo",
+    "media",
+    "names",
+    "render",
+    "settings",
+    "stats",
+]

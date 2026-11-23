@@ -1,62 +1,142 @@
 {
-    "backend_url": {
-        "description": "本地识别服务地址",
-        "hint": "例如 http://127.0.0.1:8080，服务需与本插件网络互通",
-        "type": "string",
-        "default": "http://127.0.0.1:8080"
+  "backend_url": {
+    "description": "识别服务地址",
+    "hint": "默认兼容懂鸟 v2 的 /dongniao 接口。",
+    "type": "string",
+    "default": "http://127.0.0.1:8080"
+  },
+  "api_key": {
+    "description": "接口密钥",
+    "hint": "留空表示后端未启用鉴权。",
+    "type": "string",
+    "default": ""
+  },
+  "api_key_header": {
+    "description": "密钥请求头",
+    "hint": "发送 api_key 时使用的请求头名称。",
+    "type": "string",
+    "default": "api_key"
+  },
+  "max_in_flight": {
+    "description": "并发识别数",
+    "hint": "同时处理的识别请求上限。",
+    "type": "int",
+    "default": 2
+  },
+  "queue_timeout_s": {
+    "description": "排队等待上限（秒）",
+    "hint": "并发占满时最多排队多久，超时回复“有点忙”。",
+    "type": "int",
+    "default": 20
+  },
+  "backend_concurrency": {
+    "description": "后端并发连接数",
+    "hint": "与识别服务之间的并发 HTTP 请求上限。",
+    "type": "int",
+    "default": 4
+  },
+  "request_timeout_s": {
+    "description": "请求超时（秒）",
+    "hint": "单次识别的总超时时间。",
+    "type": "int",
+    "default": 30
+  },
+  "ffmpeg_path": {
+    "description": "ffmpeg 路径",
+    "hint": "留空则在 PATH 中查找。",
+    "type": "string",
+    "default": ""
+  },
+  "auto_reply": {
+    "description": "自动回复",
+    "hint": "打开后直接发来的图片或录音会自动识别；关闭后只有 LLM 工具调用才会识别。",
+    "type": "bool",
+    "default": true
+  },
+  "archive_enabled": {
+    "description": "归档数据",
+    "hint": "关闭后识别记录不写盘，阅后即焚。",
+    "type": "bool",
+    "default": true
+  },
+  "image_mode": {
+    "description": "识别后发送图片",
+    "hint": "开启=发全部图片；仅照片=只发裁剪图；仅频谱图=只发鸟鸣频谱；关闭=只回文字。",
+    "type": "string",
+    "default": "all"
+  },
+  "group_whitelist_enabled": {
+    "description": "群聊白名单开关",
+    "hint": "打开后只有名单里的群聊可以识别；名单为空表示谁都不识别。",
+    "type": "bool",
+    "default": false
+  },
+  "group_whitelist": {
+    "description": "群聊白名单",
+    "hint": "群号或 unified_msg_origin，可在看板里直接勾选。",
+    "type": "list",
+    "items": {
+      "type": "string",
+      "description": "群号"
     },
-    "api_key": {
-        "description": "服务访问密钥",
-        "hint": "留空表示服务端未启用鉴权；密钥只保存在 AstrBot 配置中",
-        "type": "string",
-        "default": ""
+    "default": []
+  },
+  "private_whitelist_enabled": {
+    "description": "私聊白名单开关",
+    "hint": "打开后只有名单里的私聊可以识别；名单为空表示谁都不识别。",
+    "type": "bool",
+    "default": false
+  },
+  "private_whitelist": {
+    "description": "私聊白名单",
+    "hint": "用户号或 unified_msg_origin，可在看板里直接勾选。",
+    "type": "list",
+    "items": {
+      "type": "string",
+      "description": "用户号"
     },
-    "api_key_header": {
-        "description": "密钥请求头名",
-        "hint": "与服务端配置保持一致即可",
-        "type": "string",
-        "default": "api_key"
-    },
-    "max_in_flight": {
-        "description": "并发识别的请求数",
-        "hint": "同时处理的请求上限，超出时直接回复繁忙",
-        "type": "int",
-        "default": 2
-    },
-    "backend_concurrency": {
-        "description": "插件到后端的连接上限",
-        "hint": "通常不小于并发识别数",
-        "type": "int",
-        "default": 4
-    },
-    "request_timeout_s": {
-        "description": "单次识别超时（秒）",
-        "hint": "包含排队与推理时间",
-        "type": "int",
-        "default": 30
-    },
-    "ffmpeg_path": {
-        "description": "ffmpeg 路径",
-        "hint": "留空则使用 PATH 中的 ffmpeg，用于把语音转成服务接受的 WAV",
-        "type": "string",
-        "default": ""
-    },
-    "retention_days": {
-        "description": "归档保留天数",
-        "hint": "超过天数的归档批次会被清理",
-        "type": "int",
-        "default": 7
-    },
-    "archive_max_mb": {
-        "description": "归档体积上限（MB）",
-        "hint": "超出后从最旧的批次开始清理",
-        "type": "int",
-        "default": 2048
-    },
-    "archive_interval_s": {
-        "description": "归档整理间隔（秒）",
-        "hint": "后台多久打包并轮转一次",
-        "type": "int",
-        "default": 900
-    }
+    "default": []
+  },
+  "class_code": {
+    "description": "识别类别",
+    "hint": "懂鸟 class 字段：B 鸟类、M 哺乳、A 两栖、R 爬行、F 鱼类，可组合；留空表示不限制。",
+    "type": "string",
+    "default": "B"
+  },
+  "api_area": {
+    "description": "默认地区码",
+    "hint": "懂鸟 area 字段，例如 CN-BJ；消息里给出的地点优先。",
+    "type": "string",
+    "default": ""
+  },
+  "did": {
+    "description": "设备标识",
+    "hint": "懂鸟 did 字段，字母数字，最长 40 位。",
+    "type": "string",
+    "default": ""
+  },
+  "model_names": {
+    "description": "模型名称",
+    "hint": "显示在「识鸟状态」里的模型名，多个用顿号分开。",
+    "type": "string",
+    "default": ""
+  },
+  "retention_days": {
+    "description": "归档保留天数",
+    "hint": "超过天数的归档会被删除；0 表示不按时间清理。",
+    "type": "int",
+    "default": 7
+  },
+  "archive_max_mb": {
+    "description": "归档容量上限（MB）",
+    "hint": "超出后从最旧的批次开始删除。",
+    "type": "int",
+    "default": 2048
+  },
+  "archive_interval_s": {
+    "description": "归档间隔（秒）",
+    "hint": "后台打包与清理的周期。",
+    "type": "int",
+    "default": 900
+  }
 }

@@ -1,12 +1,21 @@
-"""Async client for the local bird identification service.
+"""Async client for the Dongniao v2 bird identification service.
 
-The service speaks the Dongniao v2 protocol over a single POST endpoint. A
-request that carries media is accepted asynchronously: the first response
-returns code 1001 together with a result id, and the caller polls with that id
-until the payload is ready.
+The service speaks the Dongniao v2 protocol over one POST endpoint and always
+answers with a `[code, payload]` envelope. A request that carries media is
+accepted asynchronously: the first reply returns code 1001 with a result id and
+the caller polls with that id until the payload is ready.
 
-Busy states are surfaced as exceptions instead of being retried silently, so
-the plugin can tell the user to try again instead of making them wait behind an
+Every documented field of the protocol is supported so the plugin can be pointed
+at the official endpoint as well as at a local deployment:
+
+* `image` + `upload=1`, or `url` for a remote photo;
+* `sound` + `upload=1`, or `sound_url` for a remote recording;
+* `resultid` to collect a running job;
+* `animalid` (+ `class`) for the encyclopedia entry;
+* `quota=1` for the remaining allowance.
+
+Busy states are surfaced as exceptions instead of being retried silently, so the
+plugin can tell the user to try again instead of making them wait behind an
 unbounded queue.
 """
 
@@ -20,6 +29,9 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 __all__ = [
+    "BACKEND_LOCAL",
+    "BACKEND_OFFICIAL",
+    "BACKEND_OFFLINE",
     "BirdClient",
     "BirdResult",
     "BusyError",
@@ -34,14 +46,45 @@ _LOGGER = logging.getLogger(__name__)
 CODE_OK = 1000
 CODE_PROCESSING = 1001
 CODE_SOUND_ERROR = 1002
+CODE_DID_ERROR = 1003
+CODE_CLASS_ERROR = 1004
+CODE_AREA_ERROR = 1005
+CODE_IP_ERROR = 1006
 CODE_QUOTA = 1007
+CODE_NO_TARGET = 1008
+CODE_AREA_FORMAT_ERROR = 1009
 CODE_NO_ANIMALS = 1010
+CODE_OUT_OF_RANGE = 1011
+
+#: Codes that mean "the request worked but the answer is empty".
+EMPTY_CODES = (CODE_NO_TARGET, CODE_NO_ANIMALS, CODE_OUT_OF_RANGE)
+
+#: Local deployments expose a health document; the official service does not.
+BACKEND_LOCAL = "local"
+BACKEND_OFFICIAL = "official"
+BACKEND_OFFLINE = "offline"
+
+#: Element codes the protocol accepts in the `class` field.
+VALID_CLASS_CODES = ("B", "M", "A", "R", "F")
 
 #: The local deployment reports an exhausted queue with this literal message.
 BUSY_MESSAGE = "server busy"
 
 DEFAULT_POLL_INTERVAL_S = 0.15
 DEFAULT_TIMEOUT_S = 30.0
+
+#: Human readable fallback for codes whose payload carries no message.
+_CODE_MESSAGES = {
+    CODE_DID_ERROR: "invalid did",
+    CODE_CLASS_ERROR: "invalid class",
+    CODE_AREA_ERROR: "invalid area",
+    CODE_IP_ERROR: "ip is not allowed",
+    CODE_QUOTA: "quota exhausted",
+    CODE_NO_TARGET: "no target found",
+    CODE_AREA_FORMAT_ERROR: "invalid area code",
+    CODE_NO_ANIMALS: "no animal recognised",
+    CODE_OUT_OF_RANGE: "species out of the area range",
+}
 
 
 class ClientError(RuntimeError):
@@ -147,6 +190,28 @@ class BirdResult:
         return self.detections[0] if self.detections else None
 
 
+def normalize_class(value: Any) -> str:
+    """Reduce a caller supplied element selector to a protocol class code.
+
+    The protocol accepts any combination of B, M, A, R and F. Unknown letters
+    are dropped instead of being rejected, so a typo degrades to a wider search
+    rather than to a failed request.
+
+    Args:
+        value: Raw selector from the configuration or a caller.
+
+    Returns:
+        The sanitised code, or an empty string when nothing valid remains.
+    """
+    if not isinstance(value, str):
+        return ""
+    seen: List[str] = []
+    for char in value.upper():
+        if char in VALID_CLASS_CODES and char not in seen:
+            seen.append(char)
+    return "".join(seen)
+
+
 def _parse_species(item: Any) -> Optional[Species]:
     """Parse one [confidence, label, animal_id, class] candidate.
 
@@ -179,8 +244,79 @@ def _parse_species(item: Any) -> Optional[Species]:
     )
 
 
+def _sound_species(entries: Any) -> List[Species]:
+    """Parse the summary rows of a recording reply.
+
+    The official protocol reports a recording as
+    `[species_id, confidence, scientific, chinese]` with a confidence between
+    0 and 1. Both a ratio and a percentage are accepted so a deployment that
+    already scaled the score keeps working.
+
+    Args:
+        entries: The `summary` (or one `splits` element) of the payload.
+
+    Returns:
+        Species in descending confidence order.
+    """
+    rows: List[Species] = []
+    if not isinstance(entries, (list, tuple)):
+        return rows
+    for item in entries:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        try:
+            score = float(item[1])
+        except (TypeError, ValueError):
+            continue
+        if 0.0 <= score <= 1.0:
+            score *= 100.0
+        scientific = str(item[2]).strip() if len(item) > 2 and item[2] else ""
+        chinese = str(item[3]).strip() if len(item) > 3 and item[3] else ""
+        if not scientific and not chinese:
+            continue
+        rows.append(
+            Species(
+                confidence=score,
+                scientific=scientific or chinese,
+                english=scientific or chinese,
+                animal_class="B",
+                common=chinese or scientific,
+            )
+        )
+    rows.sort(key=lambda row: row.confidence, reverse=True)
+    return rows
+
+
+def _decode_sound_payload(payload: dict, elapsed_ms: float) -> BirdResult:
+    """Turn the dictionary shaped recording payload into a result.
+
+    Args:
+        payload: Decoded reply body holding `duration`, `summary` and
+            `splits`.
+        elapsed_ms: Measured duration for the result.
+
+    Returns:
+        A BirdResult with one box-less detection, matching the audio reply
+        layout of the local deployment.
+    """
+    species = _sound_species(payload.get("summary"))
+    if not species:
+        # Older replies only carry the per window split list; fold it back into
+        # a single ranking instead of dropping the answer.
+        for entry in payload.get("splits") or []:
+            if isinstance(entry, (list, tuple)) and len(entry) > 2:
+                species.extend(_sound_species(entry[2]))
+        species.sort(key=lambda row: row.confidence, reverse=True)
+    detections = [Detection(box=(), species=species)] if species else []
+    return BirdResult(detections=detections, kind="audio", elapsed_ms=elapsed_ms)
+
+
 def _decode_payload(payload: Any, kind: str, elapsed_ms: float) -> BirdResult:
     """Turn the raw JSON payload into a BirdResult.
+
+    Photographs come back as a list of boxed regions while recordings use a
+    dictionary holding a ranked summary, so both shapes are accepted for any
+    request kind.
 
     Args:
         payload: Raw payload from the service.
@@ -190,6 +326,9 @@ def _decode_payload(payload: Any, kind: str, elapsed_ms: float) -> BirdResult:
     Returns:
         A BirdResult holding every usable detection in the payload.
     """
+    if isinstance(payload, dict):
+        return _decode_sound_payload(payload, elapsed_ms)
+
     detections: List[Detection] = []
     if isinstance(payload, list):
         for entry in payload:
@@ -216,6 +355,38 @@ def _decode_payload(payload: Any, kind: str, elapsed_ms: float) -> BirdResult:
     return BirdResult(detections=detections, kind=kind, elapsed_ms=elapsed_ms)
 
 
+def _message_of(payload: Any) -> str:
+    """Return the readable part of an error payload."""
+    if isinstance(payload, str):
+        return payload
+    if payload is None:
+        return ""
+    return str(payload)
+
+
+def _raise_for_code(code: Any, payload: Any) -> None:
+    """Raise the exception matching a failure code.
+
+    Args:
+        code: Protocol code from the service.
+        payload: Payload that came with the code.
+
+    Returns:
+        None; the function only returns for the success code.
+
+    Raises:
+        BusyError: The service queue is full.
+        ClientError: Any other business failure reported by the service.
+    """
+    message = _message_of(payload)
+    if code == CODE_QUOTA and message.strip().lower() == BUSY_MESSAGE:
+        raise BusyError(message)
+    numeric = int(code) if isinstance(code, int) else 0
+    if not message:
+        message = _CODE_MESSAGES.get(numeric, "unexpected reply")
+    raise ClientError(numeric, message)
+
+
 def _error_or_result(
     code: Any, payload: Any, kind: str, elapsed_ms: float
 ) -> BirdResult:
@@ -228,7 +399,7 @@ def _error_or_result(
         elapsed_ms: Measured duration.
 
     Returns:
-        A BirdResult for success and for the "nothing found" code.
+        A BirdResult for success and for the "nothing found" codes.
 
     Raises:
         BusyError: The service queue is full.
@@ -236,16 +407,15 @@ def _error_or_result(
     """
     if code == CODE_OK:
         return _decode_payload(payload, kind, elapsed_ms)
-    if code == CODE_NO_ANIMALS:
+    if code in EMPTY_CODES:
         return BirdResult(kind=kind, elapsed_ms=elapsed_ms)
-    message = payload if isinstance(payload, str) else str(payload)
-    if code == CODE_QUOTA and message.strip().lower() == BUSY_MESSAGE:
-        raise BusyError(message)
-    raise ClientError(int(code) if isinstance(code, int) else 0, message)
+    _raise_for_code(code, payload)
+    # Unreachable: `_raise_for_code` always raises.
+    return BirdResult(kind=kind, elapsed_ms=elapsed_ms)
 
 
 class BirdClient:
-    """Client for the local Dongniao compatible endpoint.
+    """Client for the Dongniao compatible endpoint.
 
     The client keeps one aiohttp session per instance and never retries a busy
     answer: saturation is reported immediately so the chat layer can respond,
@@ -278,12 +448,29 @@ class BirdClient:
         """
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key.strip()
-        self.api_key_header = api_key_header
+        self.api_key_header = api_key_header or "api_key"
         self.poll_interval_s = max(0.02, float(poll_interval_s))
         self.timeout_s = max(1.0, float(timeout_s))
-        self._semaphore = asyncio.Semaphore(max(1, int(max_concurrency)))
+        self.max_concurrency = max(1, int(max_concurrency))
+        self._semaphore = asyncio.Semaphore(self.max_concurrency)
         self._session: Optional[aiohttp.ClientSession] = None
         self._session_lock = asyncio.Lock()
+
+    def set_max_concurrency(self, limit: int) -> None:
+        """Change the local in-flight request budget.
+
+        Args:
+            limit: New budget; values below one are treated as one.
+
+        Returns:
+            None. In-flight requests keep their slot; later ones use the new
+            budget.
+        """
+        value = max(1, int(limit))
+        if value == self.max_concurrency:
+            return
+        self.max_concurrency = value
+        self._semaphore = asyncio.Semaphore(value)
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Return the shared session, creating it on first use.
@@ -298,7 +485,8 @@ class BirdClient:
                 self._session = aiohttp.ClientSession(
                     timeout=aiohttp.ClientTimeout(total=self.timeout_s)
                 )
-        return self._session
+            session = self._session
+        return session
 
     async def close(self) -> None:
         """Close the shared session; safe to call more than once."""
@@ -334,9 +522,90 @@ class BirdClient:
             return {}
         return payload if isinstance(payload, dict) else {}
 
+    async def probe(self) -> str:
+        """Classify the configured endpoint.
+
+        The official service has no health document, so an empty health reply
+        says nothing on its own. A quota request is free of charge and answers
+        with a protocol envelope whenever a Dongniao server is listening, which
+        is what separates the official endpoint from an unreachable one.
+
+        Returns:
+            One of BACKEND_LOCAL, BACKEND_OFFICIAL or BACKEND_OFFLINE.
+        """
+        if await self.health():
+            return BACKEND_LOCAL
+        try:
+            await self._call({"quota": "1"})
+        except ClientError as exc:
+            # A protocol level answer (bad key, throttling, busy) still proves
+            # that a Dongniao service is there; code 0 is a transport failure.
+            return BACKEND_OFFICIAL if exc.code else BACKEND_OFFLINE
+        except (asyncio.TimeoutError, OSError, ValueError) as exc:
+            _LOGGER.debug("quota probe failed: %s", exc)
+            return BACKEND_OFFLINE
+        return BACKEND_OFFICIAL
+
+    async def _call(self, fields: Dict[str, str]) -> Any:
+        """Post one plain field map and return the success payload.
+
+        Args:
+            fields: Form fields of the request.
+
+        Returns:
+            The payload of a successful reply.
+
+        Raises:
+            BusyError: The service is saturated.
+            ClientError: Any protocol level failure.
+            asyncio.TimeoutError: The request missed its deadline.
+        """
+        session = await self._get_session()
+        async with self._semaphore:
+            async with session.post(
+                self.base_url + "/dongniao",
+                data=fields,
+                headers=self._headers(),
+            ) as response:
+                if response.status != 200:
+                    raise ClientError(0, "http %d" % response.status)
+                reply = await response.json(content_type=None)
+        code, payload = _split_reply(reply)
+        if code == CODE_OK:
+            return payload
+        _raise_for_code(code, payload)
+        return None
+
+    async def quota(self) -> Dict[str, Any]:
+        """Read the remaining allowance of this key.
+
+        Returns:
+            The quota document; empty when the reply is not a mapping.
+        """
+        payload = await self._call({"quota": "1"})
+        return payload if isinstance(payload, dict) else {}
+
+    async def encyclopedia(
+        self, animal_id: Any, class_code: str = "B"
+    ) -> Dict[str, Any]:
+        """Read the encyclopedia entry of one animal id.
+
+        Args:
+            animal_id: Numeric id reported next to a candidate.
+            class_code: Element selector, B for birds.
+
+        Returns:
+            The encyclopedia document; empty when the reply is not a mapping.
+        """
+        fields = {"animalid": str(animal_id)}
+        selector = normalize_class(class_code) or "B"
+        fields["class"] = selector[0]
+        payload = await self._call(fields)
+        return payload if isinstance(payload, dict) else {}
+
     async def _submit(
         self,
-        data: aiohttp.FormData,
+        data: Any,
         kind: str,
         deadline_s: Optional[float],
     ) -> BirdResult:
@@ -373,7 +642,7 @@ class BirdClient:
 
     async def _submit_loop(
         self,
-        data: aiohttp.FormData,
+        data: Any,
         kind: str,
         limit: float,
         started: float,
@@ -434,6 +703,8 @@ class BirdClient:
         area: str = "",
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
+        class_code: str = "",
+        did: str = "",
         deadline_s: Optional[float] = None,
     ) -> BirdResult:
         """Identify the birds in one image.
@@ -444,6 +715,8 @@ class BirdClient:
             area: Optional Dongniao region code such as CN-BJ.
             latitude: Optional latitude for the geographic prior.
             longitude: Optional longitude for the geographic prior.
+            class_code: Optional element selector, B for birds only.
+            did: Optional device id of the caller.
             deadline_s: Optional per-request deadline in seconds.
 
         Returns:
@@ -451,7 +724,43 @@ class BirdClient:
         """
         form = aiohttp.FormData()
         form.add_field("image", image_bytes, filename=filename)
+        # The official endpoint refuses an upload without this flag; the local
+        # deployment ignores it.
+        form.add_field("upload", "1")
+        _add_class(form, class_code)
         _add_geo(form, area, latitude, longitude)
+        _add_did(form, did)
+        return await self._submit(form, "image", deadline_s)
+
+    async def identify_image_url(
+        self,
+        url: str,
+        *,
+        area: str = "",
+        class_code: str = "",
+        did: str = "",
+        deadline_s: Optional[float] = None,
+    ) -> BirdResult:
+        """Identify the birds in a photo the service downloads itself.
+
+        Args:
+            url: Public http(s) address of the photo.
+            area: Optional region code.
+            class_code: Optional element selector.
+            did: Optional device id of the caller.
+            deadline_s: Optional per-request deadline in seconds.
+
+        Returns:
+            The parsed identification result.
+        """
+        fields = {"url": url}
+        _add_class(fields, class_code)
+        if area:
+            fields["area"] = area
+        _add_did(fields, did)
+        form = aiohttp.FormData()
+        for key, value in fields.items():
+            form.add_field(key, value)
         return await self._submit(form, "image", deadline_s)
 
     async def identify_sound(
@@ -462,6 +771,7 @@ class BirdClient:
         area: str = "",
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
+        did: str = "",
         deadline_s: Optional[float] = None,
     ) -> BirdResult:
         """Identify the birds in one recording.
@@ -475,6 +785,7 @@ class BirdClient:
             area: Optional Dongniao region code such as CN-BJ.
             latitude: Optional latitude for the geographic prior.
             longitude: Optional longitude for the geographic prior.
+            did: Optional device id of the caller.
             deadline_s: Optional per-request deadline in seconds.
 
         Returns:
@@ -482,7 +793,35 @@ class BirdClient:
         """
         form = aiohttp.FormData()
         form.add_field("sound", sound_bytes, filename=filename)
+        form.add_field("upload", "1")
         _add_geo(form, area, latitude, longitude)
+        _add_did(form, did)
+        return await self._submit(form, "audio", deadline_s)
+
+    async def identify_sound_url(
+        self,
+        url: str,
+        *,
+        area: str = "",
+        did: str = "",
+        deadline_s: Optional[float] = None,
+    ) -> BirdResult:
+        """Identify the birds in a recording the service downloads itself.
+
+        Args:
+            url: Public http(s) address of the recording.
+            area: Optional region code.
+            did: Optional device id of the caller.
+            deadline_s: Optional per-request deadline in seconds.
+
+        Returns:
+            The parsed identification result.
+        """
+        form = aiohttp.FormData()
+        form.add_field("sound_url", url)
+        if area:
+            form.add_field("area", area)
+        _add_did(form, did)
         return await self._submit(form, "audio", deadline_s)
 
 
@@ -498,6 +837,44 @@ def _split_reply(reply: Any) -> tuple:
     if isinstance(reply, (list, tuple)) and len(reply) >= 2:
         return reply[0], reply[1]
     return 0, "unexpected reply"
+
+
+def _add_class(target: Any, class_code: str) -> None:
+    """Attach the optional element selector to a form or field map.
+
+    Args:
+        target: Multipart body or plain field mapping under construction.
+        class_code: Raw selector; only the first letter is sent.
+
+    Returns:
+        None
+    """
+    selector = normalize_class(class_code)
+    if not selector:
+        return
+    if isinstance(target, dict):
+        target["class"] = selector
+    else:
+        target.add_field("class", selector)
+
+
+def _add_did(target: Any, did: str) -> None:
+    """Attach the optional device id to a form or field map.
+
+    Args:
+        target: Multipart body or plain field mapping under construction.
+        did: Device id; blank values are omitted.
+
+    Returns:
+        None
+    """
+    value = (did or "").strip()
+    if not value:
+        return
+    if isinstance(target, dict):
+        target["did"] = value
+    else:
+        target.add_field("did", value)
 
 
 def _add_geo(
